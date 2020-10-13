@@ -44,7 +44,7 @@ class TextData:
 
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
-        self.datasets = self.loadCorpus()
+        self.datasets = self.loadCorpus(genre='500')
 
 
         print('set')
@@ -95,16 +95,16 @@ class TextData:
             batch.label.append(ans)
             for j in range(4):
                 batch.optionSeqs[j].append(optionABCD[j])
-                batch.option_lens[j].append(len(batch.optionSeqs[j]))
+                batch.option_lens[j].append(len(batch.optionSeqs[j][i]))
 
         maxlen_con = max(batch.context_lens)
-        maxlen_q = max(batch.q_lens)
+        maxlen_q = max(batch.question_lens)
         maxlen_opt = [max(li) for li in batch.option_lens]
         for i in range(batchSize):
             batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (maxlen_con - len(batch.contextSeqs[i]))
             batch.questionSeqs[i] = batch.questionSeqs[i] + [self.word2index['PAD']] * (maxlen_q - len(batch.questionSeqs[i]))
-            for j in range(4):
-                batch.optionSeqs[j][i] = batch.optionSeqs[j][i] + [self.word2index['PAD']] * (maxlen_opt[j] - len(batch.optionSeqs[j][i]))
+            # for j in range(4):
+            #     batch.optionSeqs[j][i] = batch.optionSeqs[j][i] + [self.word2index['PAD']] * (maxlen_opt[j] - len(batch.optionSeqs[j][i]))
 
 
         return batch
@@ -200,9 +200,9 @@ class TextData:
         self.corpus_file_train = self.basedir + 'mc' + genre +'.train.tsv'
         self.corpus_file_dev =  self.basedir + 'mc' + genre +'.dev.tsv'
         self.corpus_file_test =  self.basedir + 'mc' + genre +'.test.tsv'
-        self.data_dump_path = args['rootDir'] + '/MCTest_'+genre+'.pkl'
+        self.data_dump_path = args['rootDir'] + '/MCTest_'+genre+'_' + str(args['embeddingSize']) +'d.pkl'
         if glove:
-            self.vocfile = args['rootDir'] + '/glove.6B.100d.txt'
+            self.vocfile = args['rootDir'] + '/glove.6B.'+  str(args['embeddingSize']) +'d.txt'
         else:
             self.vocfile = args['rootDir'] + '/voc_MCTest_'+genre+'.txt'
 
@@ -224,7 +224,7 @@ class TextData:
                     anslines = ansfile.readlines()
                     for line, ans in zip(lines, anslines):
                         datum = line.split('\t')
-                        answer_list = ans.split('\t')
+                        answer_list = ans.strip().split('\t')
                         option_list = [datum[ind + 1 : ind + 5] for ind in [3,8,13,18]]
                         q_list = [datum[ind] for ind in [3,8,13,18]]
                         context = datum[2].lower()
@@ -333,7 +333,7 @@ class TextData:
         print ('Dictionary Got!')
         return word2index
 
-    def read_word2vec_from_pretrained(self, embfile, topk_word_num=30000):
+    def read_word2vec_from_pretrained(self, embfile, topk_word_num=100000):
         word2index = dict()
         word2index['PAD'] = 0
         word2index['START_TOKEN'] = 1
@@ -345,7 +345,7 @@ class TextData:
         vectordim = -1
         index2vector = []
         with open(embfile, "r") as v:
-            lines = v.readlines()
+            lines = v.readlines()[1:]
             lines = lines[:topk_word_num]
             for line in tqdm(lines):
                 word_vec = line.strip().split()
@@ -360,7 +360,7 @@ class TextData:
 
         index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(pre_cnts)] + index2vector
         index2vector = np.asarray(index2vector)
-        index2word = [w for w, n in word2index]
+        index2word = [w for w, n in word2index.items()]
         print(len(word2index), cnt)
         print('Dictionary Got!')
         return word2index, index2word, index2vector
@@ -426,7 +426,7 @@ class TextData:
         print(len(self.datasets['train']))
         for i in range(args['playDataset']):
             idSample = random.randint(0, len(self.datasets['train']) - 1)
-            print('sen: {} {}'.format(self.sequence2str(self.datasets['train'][idSample][0], clean=True), self.datasets['train'][idSample][1]))
+            print('sen: {} {} {} {}'.format(self.sequence2str(self.datasets['train'][idSample][0], clean=True), self.datasets['train'][idSample][1], self.datasets['train'][idSample][2], self.datasets['train'][idSample][3]))
             print()
         pass
 
