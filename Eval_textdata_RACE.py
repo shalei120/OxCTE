@@ -10,8 +10,10 @@ import random
 import string, copy
 from nltk.tokenize import word_tokenize
 import jieba
-import json
+import json,torch
 from Hyperparameters import args
+# from transformers import BertTokenizer
+from transformers import AlbertTokenizer
 class Batch:
     """Struct containing batches info
     """
@@ -50,24 +52,15 @@ class Eval_TextData:
             args: parameters of the model
         """
 
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+        # self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+        self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2', do_lower_case=True)
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
         self.datasets = self.loadCorpus()
 
 
         print('set')
-        # Plot some stats:
-        self._printStats(corpusname)
-
-        if args['playDataset']:
-            self.playDataset()
-
         self.batches = {}
-
-    def _printStats(self, corpusname):
-        print('Loaded {}: {} words, {} QA'.format(corpusname, len(self.word2index), len(self.trainingSamples)))
-
 
     def shuffle(self):
         """Shuffle the training samples
@@ -75,7 +68,7 @@ class Eval_TextData:
         print('Shuffling the dataset...')
         random.shuffle(self.datasets['train'])
 
-    def preprocessing_for_bert(self, data):
+    def preprocessing_for_bert(self, data, maxlen=10):
         """Perform required preprocessing steps for pretrained BERT.
         @param    data (np.array): Array of texts to be processed.
         @return   input_ids (torch.Tensor): Tensor of token ids to be fed to a model.
@@ -85,7 +78,7 @@ class Eval_TextData:
         # Create empty lists to store outputs
         input_ids = []
         attention_masks = []
-
+        # print(self.tokenizer.sep_token_id,self.tokenizer.sep_token)
         # For every sentence...
         for sent in data:
             # `encode_plus` will:
@@ -96,10 +89,11 @@ class Eval_TextData:
             #    (5) Create attention mask
             #    (6) Return a dictionary of outputs
             encoded_sent = self.tokenizer.encode_plus(
-                text=text_preprocessing(sent),  # Preprocess sentence
+                text=sent,  # Preprocess sentence
                 add_special_tokens=True,  # Add `[CLS]` and `[SEP]`
-                max_length=args['maxLengthEnco'],  # Max length to truncate/pad
+                max_length=maxlen,  # Max length to truncate/pad
                 pad_to_max_length=True,  # Pad sentence to max length
+                truncation = True,
                 # return_tensors='pt',           # Return PyTorch tensor
                 return_attention_mask=True  # Return attention mask
             )
@@ -109,8 +103,68 @@ class Eval_TextData:
             attention_masks.append(encoded_sent.get('attention_mask'))
 
         # Convert lists to tensors
-        input_ids = torch.tensor(input_ids)
-        attention_masks = torch.tensor(attention_masks)
+        input_ids = torch.tensor(input_ids).to(args['device'])
+        attention_masks = torch.tensor(attention_masks).to(args['device'])
+
+        return input_ids, attention_masks
+
+    def _truncate_seq_tuple(self, tokens_a, tokens_b, tokens_c, max_length):
+        """Truncates a sequence tuple in place to the maximum length."""
+
+        # This is a simple heuristic which will always truncate the longer sequence
+        # one token at a time. This makes more sense than truncating an equal percent
+        # of tokens from each, since if one sequence is very short then each token
+        # that's truncated likely contains more information than a longer sequence.
+        while True:
+            total_length = len(tokens_a) + len(tokens_b) + len(tokens_c)
+            if total_length <= max_length:
+                break
+            if len(tokens_a) >= len(tokens_b) and len(tokens_a) >= len(tokens_c):
+                tokens_a.pop()
+            elif len(tokens_b) >= len(tokens_a) and len(tokens_b) >= len(tokens_c):
+                tokens_b.pop()
+            else:
+                tokens_c.pop()
+
+    def preprocessing_seqs_for_bert(self, datalist, maxlen=512):
+        """Perform required preprocessing steps for pretrained BERT.
+        @param    data (np.array): Array of texts to be processed.
+        @return   input_ids (torch.Tensor): Tensor of token ids to be fed to a model.
+        @return   attention_masks (torch.Tensor): Tensor of indices specifying which
+                      tokens should be attended to by the model.
+        """
+
+        # Create empty lists to store outputs
+        input_ids = []
+        attention_masks = []
+        # print(self.tokenizer.sep_token_id,self.tokenizer.sep_token)
+        # For every sentence...
+        for context, q, opt in zip(datalist[0],datalist[1],datalist[2]):
+            # `encode_plus` will:
+            #    (1) Tokenize the sentence
+            #    (2) Add the `[CLS]` and `[SEP]` token to the start and end
+            #    (3) Truncate/Pad sentence to max length
+            #    (4) Map tokens to their IDs
+            #    (5) Create attention mask
+            #    (6) Return a dictionary of outputs
+            self._truncate_seq_tuple(context, q, opt, maxlen - 4)
+            encoded_sent = self.tokenizer.encode_plus(
+                text=context + [self.tokenizer.sep_token] + q  + [self.tokenizer.sep_token] + opt,  # Preprocess sentence
+                add_special_tokens=True,  # Add `[CLS]` and `[SEP]`
+                max_length=maxlen,  # Max length to truncate/pad
+                pad_to_max_length=True,  # Pad sentence to max length
+                truncation = True,
+                # return_tensors='pt',           # Return PyTorch tensor
+                return_attention_mask=True  # Return attention mask
+            )
+
+            # Add the outputs to the lists
+            input_ids.append(encoded_sent.get('input_ids'))
+            attention_masks.append(encoded_sent.get('attention_mask'))
+
+        # Convert lists to tensors
+        input_ids = torch.tensor(input_ids).to(args['device'])
+        attention_masks = torch.tensor(attention_masks).to(args['device'])
 
         return input_ids, attention_masks
 
@@ -144,13 +198,18 @@ class Eval_TextData:
             optionC_batch.append(optionABCD[2])
             optionD_batch.append(optionABCD[3])
             ans_batch.append(ans)
-
-        batch.context_tokens, batch.context_tokens_mask = self.preprocessing_for_bert(context_tokens_batch)
-        batch.question_tokens, batch.question_tokens_mask = self.preprocessing_for_bert(q_tokens_batch)
-        batch.A_tokens, batch.A_tokens_mask = self.preprocessing_for_bert(optionA_batch)
-        batch.B_tokens, batch.B_tokens_mask = self.preprocessing_for_bert(optionB_batch)
-        batch.C_tokens, batch.C_tokens_mask = self.preprocessing_for_bert(optionC_batch)
-        batch.D_tokens, batch.D_tokens_mask = self.preprocessing_for_bert(optionD_batch)
+        #
+        # batch.context_tokens, batch.context_tokens_mask = self.preprocessing_for_bert(context_tokens_batch, 450)
+        # batch.question_tokens, batch.question_tokens_mask = self.preprocessing_for_bert(q_tokens_batch, 50)
+        # batch.A_tokens, batch.A_tokens_mask = self.preprocessing_for_bert(optionA_batch)
+        # batch.B_tokens, batch.B_tokens_mask = self.preprocessing_for_bert(optionB_batch)
+        # batch.C_tokens, batch.C_tokens_mask = self.preprocessing_for_bert(optionC_batch)
+        # batch.D_tokens, batch.D_tokens_mask = self.preprocessing_for_bert(optionD_batch)
+        batch.A_tokens, batch.A_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionA_batch), 512)
+        batch.B_tokens, batch.B_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionB_batch), 512)
+        batch.C_tokens, batch.C_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionC_batch), 512)
+        batch.D_tokens, batch.D_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionD_batch), 512)
+        batch.label = torch.LongTensor(ans_batch).to(args['device'])
 
         return batch
 
@@ -222,7 +281,7 @@ class Eval_TextData:
                 datalist = []
                 files = os.listdir(dirname + '/' + genre)
                 for filename in tqdm(files):
-                    with open(filename, 'r',encoding="utf-8") as rhandle:
+                    with open(dirname + '/' + genre + '/'+ filename, 'r',encoding="utf-8") as rhandle:
                         lines = rhandle.readlines()
                         assert len(lines) == 1
                         line = lines[0]
@@ -282,58 +341,4 @@ class Eval_TextData:
             datasets = data['datasets']
 
         return datasets
-
-
-
-    def sequence2str(self, sequence, clean=False, reverse=False):
-        """Convert a list of integer into a human readable string
-        Args:
-            sequence (list<int>): the sentence to print
-            clean (Bool): if set, remove the <go>, <pad> and <eos> tokens
-            reverse (Bool): for the input, option to restore the standard order
-        Return:
-            str: the sentence
-        """
-
-        if not sequence:
-            return ''
-
-        if not clean:
-            return ' '.join([self.index2word[idx] for idx in sequence])
-
-        sentence = []
-        for wordId in sequence:
-            if wordId == self.word2index['END_TOKEN']:  # End of generated sentence
-                break
-            elif wordId != self.word2index['PAD'] and wordId != self.word2index['START_TOKEN']:
-                sentence.append(self.index2word[wordId])
-
-        if reverse:  # Reverse means input so no <eos> (otherwise pb with previous early stop)
-            sentence.reverse()
-
-        return self.detokenize(sentence)
-
-    def detokenize(self, tokens):
-        """Slightly cleaner version of joining with spaces.
-        Args:
-            tokens (list<string>): the sentence to print
-        Return:
-            str: the sentence
-        """
-        return ''.join([
-            ' ' + t if not t.startswith('\'') and
-                       t not in string.punctuation
-                    else t
-            for t in tokens]).strip().capitalize()
-
-    def playDataset(self):
-        """Print a random dialogue from the dataset
-        """
-        print('Randomly play samples:')
-        print(len(self.datasets['train']))
-        for i in range(args['playDataset']):
-            idSample = random.randint(0, len(self.datasets['train']) - 1)
-            print('sen: {} {}'.format(self.sequence2str(self.datasets['train'][idSample][0], clean=True), self.datasets['train'][idSample][1]))
-            print()
-        pass
 

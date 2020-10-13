@@ -22,7 +22,12 @@ class Batch:
         self.decoderSeqs = []
         self.targetSeqs = []
         self.decoder_lens = []
-
+        self.contextSeqs = []
+        self.context_lens = []
+        self.questionSeqs = []
+        self.question_lens = []
+        self.optionSeqs = [[],[],[],[]]
+        self.option_lens = [[],[],[],[]]
 
 class TextData:
     """Dataset class
@@ -77,30 +82,30 @@ class TextData:
         # Create the batch tensor
         for i in range(batchSize):
             # Unpack the sample
-            sen_ids, charge_list, law, toi, raw_sentence = samples[i]
+            context_tokens, q_tokens, optionABCD, ans = samples[i]
 
-            if len(sen_ids) > args['maxLengthEnco']:
-                sen_ids = sen_ids[:args['maxLengthEnco']]
+            if len(context_tokens) > args['maxLengthEnco']:
+                context_tokens = context_tokens[:args['maxLengthEnco']]
 
-            batch.encoderSeqs.append(sen_ids)
-            batch.encoder_lens.append(len(batch.encoderSeqs[i]))
-            if args['task'] == 'charge':
-                batch.label.append(charge_list)
-            elif args['task'] == 'law':
-                batch.label.append(law)
-            elif args['task'] == 'toi':
-                batch.label.append(toi)
+            batch.contextSeqs.append(context_tokens)
+            batch.context_lens.append(len(batch.contextSeqs[i]))
+            batch.questionSeqs.append(q_tokens)
+            batch.question_lens.append(len(batch.questionSeqs[i]))
+            batch.label.append(ans)
+            for j in range(4):
+                batch.optionSeqs[j].append(optionABCD[j])
+                batch.option_lens[j].append(len(batch.optionSeqs[j][i]))
 
-        maxlen_enc = max(batch.encoder_lens)
-        if args['task'] in ['charge', 'law']:
-            maxlen_charge = max([len(c) for c in batch.label]) + 1
-        # args['chargenum']      eos
-        # args['chargenum'] + 1  padding
-
+        maxlen_con = max(batch.context_lens)
+        maxlen_q = max(batch.question_lens)
+        maxlen_opt = [max(li) for li in batch.option_lens]
         for i in range(batchSize):
-            batch.encoderSeqs[i] = batch.encoderSeqs[i] + [self.word2index['PAD']] * (maxlen_enc - len(batch.encoderSeqs[i]))
-            if args['task'] in ['charge', 'law']:
-                batch.label[i] = batch.label[i] + [args['chargenum']] + [args['chargenum']+1] * (maxlen_charge -1 - len(batch.label[i]))
+            batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_con - len(batch.contextSeqs[i]))
+            batch.questionSeqs[i] = batch.questionSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_q - len(batch.questionSeqs[i]))
+            # for j in range(4):
+            #     batch.optionSeqs[j][i] = batch.optionSeqs[j][i] + [self.word2index['PAD']] * (maxlen_opt[j] - len(batch.optionSeqs[j][i]))
 
         return batch
 
@@ -111,9 +116,6 @@ class TextData:
         """
         if setname not in self.batches:
             self.shuffle()
-            if  args['classify_type'] == 'single':
-                self.datasets[setname] = [d for d in self.datasets[setname] if len(d[1]) == 1]
-
             batches = []
             print(len(self.datasets[setname]))
             def genNextSamples():
@@ -198,11 +200,11 @@ class TextData:
         self.corpus_file_train = self.basedir + 'train'
         self.corpus_file_dev =  self.basedir + 'dev'
         self.corpus_file_test =  self.basedir + 'test'
-        self.data_dump_path = args['rootDir'] + '/RACE_'+genre+'.pkl'
+        self.data_dump_path = args['rootDir'] + '/RACE_'+genre+'_300d.pkl'
         if glove:
-            self.vocfile = args['rootDir'] + '/glove.6B.100d.txt'
+            self.vocfile = args['rootDir'] + '/glove.6B.300d.txt'
         else:
-            self.vocfile = args['rootDir'] + '/voc_RACE_'+genre+'.txt'
+            self.vocfile = args['rootDir'] + '/voc_RACE_'+genre+'_300d.txt'
 
         print(self.data_dump_path)
         datasetExist = os.path.isfile(self.data_dump_path)
@@ -218,7 +220,7 @@ class TextData:
                 datalist = []
                 files = os.listdir(dirname + '/' + genre)
                 for filename in tqdm(files):
-                    with open(filename, 'r',encoding="utf-8") as rhandle:
+                    with open(dirname + '/' + genre + '/'+ filename, 'r',encoding="utf-8") as rhandle:
                         lines = rhandle.readlines()
                         assert len(lines) == 1
                         line = lines[0]
@@ -359,7 +361,7 @@ class TextData:
 
         index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(pre_cnts)] + index2vector
         index2vector = np.asarray(index2vector)
-        index2word = [w for w, n in word2index]
+        index2word = [w for w, n in word2index.items()]
         print(len(word2index), cnt)
         print('Dictionary Got!')
         return word2index, index2word, index2vector

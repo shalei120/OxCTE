@@ -18,15 +18,15 @@ class HP:
         args['maxLength'] = 1000
         args['vocabularySize'] = 40000
 
-        args['hiddenSize'] = 100 #300
+        args['hiddenSize'] = 200 #300
         args['numLayers'] = 2
         args['initEmbeddings'] = True
-        args['embeddingSize'] = 100 #300
+        args['embeddingSize'] = 300 #300
         # args['embeddingSource'] = "GoogleNews-vectors-negative300.bin"
 
         args['numEpochs'] = 50
         args['saveEvery'] = 2000
-        args['batchSize'] = 64
+        args['batchSize'] = 16
         args['learningRate'] = 0.001
         args['dropout'] = 0.9
         args['clip'] = 5.0

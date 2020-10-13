@@ -5,7 +5,8 @@ print = functools.partial(print, flush=True)
 import argparse
 import os
 
-from textdata_MCTEST import TextData
+from textdata_MCTEST import TextData as td_mc
+from textdata_RACE import TextData as td_race
 import time, sys
 import torch
 import torch.autograd as autograd
@@ -26,6 +27,7 @@ from LSTM import LSTM_Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
+parser.add_argument('--modelarch', '-m')
 cmdargs = parser.parse_args()
 
 usegpu = True
@@ -68,7 +70,8 @@ class Runner:
     def main(self):
         args['datasetsize'] = -1
 
-        self.textData = TextData()
+        self.textData = td_race()
+        args['batchSize'] = 256
         self.start_token = self.textData.word2index['START_TOKEN']
         self.end_token = self.textData.word2index['END_TOKEN']
         args['vocabularySize'] = self.textData.getVocabularySize()
@@ -76,7 +79,8 @@ class Runner:
         print(self.textData.getVocabularySize())
         if args['model_arch'] == 'lstm':
             print('Using LSTM model.')
-            self.model = LSTM_Model(self.textData.word2index, self.textData.index2word)
+            self.model = LSTM_Model(self.textData.word2index, self.textData.index2word, torch.FloatTensor(self.textData.index2vector))
+            self.model = self.model.to(args['device'])
             self.train()
 
     def train(self, print_every=10000, plot_every=10, learning_rate=0.001):
@@ -87,7 +91,7 @@ class Runner:
         print_littleloss_total = 0
         print(type(self.textData.word2index))
 
-        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, eps=1e-3, amsgrad=True)
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, eps=1e-3)#, amsgrad=True)
 
         iter = 1
         batches = self.textData.getBatches()
@@ -98,7 +102,7 @@ class Runner:
 
         max_accu = -1
         # accuracy = self.test('test', max_accu)
-        for epoch in range(args['numEpochs']):
+        for epoch_i in range(args['numEpochs']):
             losses = []
             # =======================================
             #               Training
@@ -113,19 +117,23 @@ class Runner:
 
             # Reset tracking variables at the beginning of each epoch
             total_loss, batch_loss, batch_counts = 0, 0, 0
-
+            tra_accuracy = []
             # Put the model into the training mode
-            model.train()
+            self.model.train()
             for step, batch in enumerate(batches):
-                model.zero_grad()
-                loss = self.model(batch)  # batch seq_len outsize
+                batch_counts += 1
+                optimizer.zero_grad()
+                # loss = self.model(batch)  # batch seq_len outsize
+                _, preds, loss = self.model.predict(batch)
+                accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
+                tra_accuracy.append(accuracy)
                 batch_loss += loss.item()
                 total_loss += loss.item()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 # Update parameters and the learning rate
                 optimizer.step()
-                scheduler.step()
+                # scheduler.step()
 
                 # Print the loss values and time elapsed for every 20 batches
                 if (step % 20 == 0 and step != 0) or (step == len(batches) - 1):
@@ -134,8 +142,8 @@ class Runner:
 
                     # Print training results
                     print(
-                        f"{epoch_i + 1:^7} | {step:^7} | {batch_loss / batch_counts:^12.6f} | {'-':^10} | {'-':^9} | {time_elapsed:^9.2f}")
-
+                        f"{epoch_i + 1:^7} | {step:^7} | {batch_loss / batch_counts:^12.6f} | {'-':^10} | { np.mean(tra_accuracy):^9.2f}| {time_elapsed:^9.2f}")
+                    tra_accuracy= []
                     # Reset batch tracking variables
                     batch_loss, batch_counts = 0, 0
                     t0_batch = time.time()
@@ -147,17 +155,16 @@ class Runner:
             # =======================================
             #               Evaluation
             # =======================================
-            if evaluation == True:
-                # After the completion of each training epoch, measure the model's performance
-                # on our validation set.
-                val_loss, val_accuracy = self.evaluate(model)
+            # After the completion of each training epoch, measure the model's performance
+            # on our validation set.
+            val_loss, val_accuracy = self.evaluate(self.model)
 
-                # Print performance over the entire training data
-                time_elapsed = time.time() - t0_epoch
+            # Print performance over the entire training data
+            time_elapsed = time.time() - t0_epoch
 
-                print(
-                    f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_accuracy:^9.2f} | {time_elapsed:^9.2f}")
-                print("-" * 70)
+            print(
+                f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_accuracy:^9.2f} | {time_elapsed:^9.2f}")
+            print("-" * 70)
             print("\n")
 
         print("Training complete!")
@@ -169,7 +176,7 @@ class Runner:
         # Put the model into the evaluation mode. The dropout layers are disabled during
         # the test time.
         model.eval()
-        batches = self.textData.getBatches('dev')
+        batches = self.textData.getBatches('test')
         n_iters = len(batches)
 
         # Tracking variables
@@ -180,17 +187,15 @@ class Runner:
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                logits = self.model(batch)
+                _, preds, loss = model.predict(batch)
 
-            # Compute loss
-            loss = loss_fn(logits, b_labels)
+
             val_loss.append(loss.item())
 
-            # Get the predictions
-            preds = torch.argmax(logits, dim=1).flatten()
+            # print(preds, batch.label)
 
             # Calculate the accuracy rate
-            accuracy = (preds == batch.labels).cpu().numpy().mean() * 100
+            accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
             val_accuracy.append(accuracy)
 
         # Compute the average accuracy and loss over the validation set.

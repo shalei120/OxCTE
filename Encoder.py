@@ -10,7 +10,7 @@ import datetime
 from Hyperparameters import args
 
 class Encoder(nn.Module):
-    def __init__(self,w2i, i2w, embedding,bidirectional = False):
+    def __init__(self,w2i, i2w, inputsize= args['embeddingSize'] , hidsize = args['hiddenSize'],bidirectional = False):
         """
         Args:
             args: parameters of the model
@@ -25,20 +25,20 @@ class Encoder(nn.Module):
 
         self.dtype = 'float32'
 
-        self.embedding = embedding
+        # self.embedding = embedding
         self.bidirectional = bidirectional
 
         if args['encunit'] == 'lstm':
-            self.enc_unit = nn.LSTM(input_size=args['embeddingSize'], hidden_size=args['hiddenSize'],
+            self.enc_unit = nn.LSTM(input_size=inputsize, hidden_size=hidsize,
                                     num_layers=args['enc_numlayer'], bidirectional = bidirectional).to(args['device'])
         elif args['encunit'] == 'gru':
-            self.enc_unit = nn.GRU(input_size=args['embeddingSize'], hidden_size=args['hiddenSize'],
+            self.enc_unit = nn.GRU(input_size=inputsize, hidden_size=hidsize,
                                    num_layers=args['enc_numlayer'], bidirectional = bidirectional).to(args['device'])
+        self.hid_size = hidsize
+        self.element_len = hidsize
 
-        self.element_len = args['hiddenSize']
 
-
-    def forward(self, encoderInputs, mask = None):
+    def forward(self, enc_input_embed, mask = None):
         '''
         :param encoderInputs: [batch, enc_len]
         :param decoderInputs: [batch, dec_len]
@@ -46,14 +46,14 @@ class Encoder(nn.Module):
         :return:
         '''
 
-        # print(x['enc_input'])
-        self.encoderInputs = encoderInputs.to(args['device'])
-        # self.encoder_lengths = encoder_lengths
+        # # print(x['enc_input'])
+        # self.encoderInputs = encoderInputs.to(args['device'])
+        # # self.encoder_lengths = encoder_lengths
+        #
+        self.batch_size = enc_input_embed.size()[0]
+        # self.enc_len = self.encoderInputs.size()[1]
 
-        self.batch_size = self.encoderInputs.size()[0]
-        self.enc_len = self.encoderInputs.size()[1]
-
-        enc_input_embed = self.embedding(self.encoderInputs).to(args['device'])#.cuda()   # batch enc_len embedsize  ; already sorted in a decreasing order
+        # enc_input_embed = self.embedding(encoderInputs).to(args['device'])#.cuda()   # batch enc_len embedsize  ; already sorted in a decreasing order
         # dec_target_embed = self.embedding(self.decoderTargets).cuda()   # batch dec_len embedsize
 
         en_outputs, en_state = self.encode(enc_input_embed, self.batch_size, mask) # seq batch emb
@@ -71,8 +71,8 @@ class Encoder(nn.Module):
         inputs = torch.transpose(inputs, 0, 1)
         bidirec = 2 if self.bidirectional else 1
         hidden = (
-        autograd.Variable(torch.randn(args['enc_numlayer']*bidirec, batch_size, args['hiddenSize'])).to(args['device']),
-        autograd.Variable(torch.randn(args['enc_numlayer']*bidirec, batch_size, args['hiddenSize'])).to(args['device']))
+        autograd.Variable(torch.randn(args['enc_numlayer']*bidirec, batch_size, self.hid_size)).to(args['device']),
+        autograd.Variable(torch.randn(args['enc_numlayer']*bidirec, batch_size, self.hid_size)).to(args['device']))
         
         # print('sdfw',inputs.shape, self.batch_size)
         # packed_input = nn.utils.rnn.pack_padded_sequence(inputs, input_len)

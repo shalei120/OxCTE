@@ -22,6 +22,8 @@ from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 import numpy as np
 import copy
 from Hyperparameters import args
+from transformers import AdamW, get_linear_schedule_with_warmup
+from Eval_BERT_model import BERT_Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
@@ -66,38 +68,34 @@ class Runner:
 
     def main(self):
         args['datasetsize'] = -1
-
+        args['batchSize'] = 8
         self.textData = Eval_TextData()
-        self.start_token = self.textData.word2index['START_TOKEN']
-        self.end_token = self.textData.word2index['END_TOKEN']
-        args['vocabularySize'] = self.textData.getVocabularySize()
-
-        print(self.textData.getVocabularySize())
-
         print('Using BERT model.')
-        self.model = BERT_Model(self.textData.word2index, self.textData.index2word)
+        self.model = BERT_Model().to(args['device'])
         self.train()
 
     def train(self, print_every=10000, plot_every=10, learning_rate=0.001):
-        start = time.time()
-        plot_losses = []
-        print_loss_total = 0  # Reset every print_every
-        plot_loss_total = 0  # Reset every plot_every
-        print_littleloss_total = 0
-        print(type(self.textData.word2index))
-
-        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, eps=1e-3, amsgrad=True)
-
+        # optimizer = optim.Adam(self.model.parameters(), lr=learning_rate, eps=1e-3, amsgrad=True)
+        optimizer = AdamW(self.model.parameters(),
+                      lr=5e-5,    # Default learning rate
+                      eps=1e-8    # Default epsilon value
+                      )
+        batches = self.textData.getBatches()
+        n_iters = len(batches)
+        total_steps = n_iters * args['numEpochs']
+        scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                num_warmup_steps=0, # Default value
+                                                num_training_steps=total_steps)
         iter = 1
         batches = self.textData.getBatches()
         n_iters = len(batches)
         print('niters ', n_iters)
 
         args['trainseq2seq'] = False
-
+        val_loss, val_accuracy = self.evaluate(self.model)
         max_accu = -1
         # accuracy = self.test('test', max_accu)
-        for epoch in range(args['numEpochs']):
+        for epoch_i in range(args['numEpochs']):
             losses = []
             # =======================================
             #               Training
@@ -114,9 +112,10 @@ class Runner:
             total_loss, batch_loss, batch_counts = 0, 0, 0
 
             # Put the model into the training mode
-            model.train()
+            self.model.train()
             for step, batch in enumerate(batches):
-                model.zero_grad()
+                batch_counts +=1
+                self.model.zero_grad()
                 loss = self.model(batch)  # batch seq_len outsize
                 batch_loss += loss.item()
                 total_loss += loss.item()
@@ -146,10 +145,11 @@ class Runner:
             # =======================================
             #               Evaluation
             # =======================================
+            evaluation = True
             if evaluation == True:
                 # After the completion of each training epoch, measure the model's performance
                 # on our validation set.
-                val_loss, val_accuracy = self.evaluate(model)
+                val_loss, val_accuracy = self.evaluate(self.model)
 
                 # Print performance over the entire training data
                 time_elapsed = time.time() - t0_epoch
@@ -174,27 +174,28 @@ class Runner:
         # Tracking variables
         val_accuracy = []
         val_loss = []
+        right = 0
+        total = 0
 
         # For each batch in our validation set...
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                logits = self.model(batch)
+                loss = self.model(batch)
 
             # Compute loss
-            loss = loss_fn(logits, b_labels)
             val_loss.append(loss.item())
 
             # Get the predictions
-            preds = torch.argmax(logits, dim=1).flatten()
+            preds = self.model.predict(batch)
 
             # Calculate the accuracy rate
-            accuracy = (preds == batch.labels).cpu().numpy().mean() * 100
-            val_accuracy.append(accuracy)
+            right += sum((preds == batch.label).cpu().numpy())
+            total += len(batch.label)
 
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
-        val_accuracy = np.mean(val_accuracy)
+        val_accuracy = right / total
 
         return val_loss, val_accuracy
 
