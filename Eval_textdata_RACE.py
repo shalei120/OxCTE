@@ -147,6 +147,9 @@ class Eval_TextData:
             #    (4) Map tokens to their IDs
             #    (5) Create attention mask
             #    (6) Return a dictionary of outputs
+            context = self.tokenizer.encode(' '.join(context), add_special_tokens=False, truncation=True, max_length=512)
+            q = self.tokenizer.encode(' '.join(q), add_special_tokens=False, truncation=True, max_length=512)
+            opt= self.tokenizer.encode(' '.join(opt), add_special_tokens=False, truncation=False)
             self._truncate_seq_tuple(context, q, opt, maxlen - 4)
             encoded_sent = self.tokenizer.encode_plus(
                 text=context + [self.tokenizer.sep_token] + q  + [self.tokenizer.sep_token] + opt,  # Preprocess sentence
