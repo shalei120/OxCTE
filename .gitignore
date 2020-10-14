@@ -2,10 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+cached_dev_bert-base-uncased_384
+cached_train_bert-base-uncased_384
+cached_test_bert-base-uncased_384
 *.out
 artifacts/
-
+runs/
 # C extensions
 *.so
 
