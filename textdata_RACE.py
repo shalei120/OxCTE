@@ -35,7 +35,7 @@ class TextData:
     """
 
 
-    def __init__(self, corpusname = 'RACE'):
+    def __init__(self, corpusname = 'RACE', do_alltext = True):
         """Load all conversations
         Args:
             args: parameters of the model
@@ -43,17 +43,39 @@ class TextData:
 
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
-        self.datasets = self.loadCorpus()
+        if do_alltext:
+            d_high = self.loadCorpus(genre='high', glove = False, do_tokenize=False)
+            d_mid = self.loadCorpus(genre='middle',glove=False, do_tokenize=False)
+            with open(args['rootDir'] + 'all.txt', 'w') as rh:
+                for sn in ['train', 'dev', 'test']:
+                    for context_tokens, q_tokens, optionABCD, ans in d_high[sn]:
+                        sens = nltk.sent_tokenize(context_tokens)
+                        for sen in sens:
+                            rh.write(sen + '\n')
+                        rh.write(q_tokens + '\n')
+                        for o in optionABCD:
+                            rh.write(o + '\n')
+
+                    for context_tokens, q_tokens, optionABCD, ans in d_mid[sn]:
+                        sens = nltk.sent_tokenize(context_tokens)
+                        for sen in sens:
+                            rh.write(sen + '\n')
+                        rh.write(q_tokens + '\n')
+                        for o in optionABCD:
+                            rh.write(o + '\n')
+
+        else:
+            self.datasets = self.loadCorpus()
 
 
-        print('set')
-        # Plot some stats:
-        self._printStats(corpusname)
+            print('set')
+            # Plot some stats:
+            self._printStats(corpusname)
 
-        if args['playDataset']:
-            self.playDataset()
+            if args['playDataset']:
+                self.playDataset()
 
-        self.batches = {}
+            self.batches = {}
 
     def _printStats(self, corpusname):
         print('Loaded {}: {} words, {} QA'.format(corpusname, len(self.word2index), len(self.trainingSamples)))
@@ -192,7 +214,7 @@ class TextData:
 
 
 
-    def loadCorpus(self, genre = 'high', glove = True):
+    def loadCorpus(self, genre = 'high', glove = True, do_tokenize = True, vec_dim = 100):
         """Load/create the conversations data
         """
 
@@ -200,11 +222,11 @@ class TextData:
         self.corpus_file_train = self.basedir + 'train'
         self.corpus_file_dev =  self.basedir + 'dev'
         self.corpus_file_test =  self.basedir + 'test'
-        self.data_dump_path = args['rootDir'] + '/RACE_'+genre+'_300d.pkl'
+        self.data_dump_path = args['rootDir'] + '/RACE_'+genre+'_'+str(vec_dim)+'d.pkl'
         if glove:
-            self.vocfile = args['rootDir'] + '/glove.6B.300d.txt'
+            self.vocfile = args['rootDir'] + '/glove.6B.'+str(vec_dim)+'d.txt'
         else:
-            self.vocfile = args['rootDir'] + '/voc_RACE_'+genre+'_300d.txt'
+            self.vocfile = args['rootDir'] + '/voc_RACE_'+genre+'_'+str(vec_dim)+'d.txt'
 
         print(self.data_dump_path)
         datasetExist = os.path.isfile(self.data_dump_path)
@@ -228,12 +250,20 @@ class TextData:
                         answer_list = passages_json['answers']
                         option_list = passages_json['options']
                         q_list = passages_json['questions']
-                        context = passages_json['article'].lower()
-                        context_tokens = word_tokenize(context)
+                        context = passages_json['article']
+                        if do_tokenize:
+                            context_tokens = word_tokenize(context.lower())
+                        else:
+                            context_tokens = context
+
                         for q, optionABCD, TrueAns in zip(q_list, option_list, answer_list):
-                            q_tokens = word_tokenize(q)
-                            for oi in range(len(optionABCD)):
-                                optionABCD[oi] = word_tokenize(optionABCD[oi].lower())
+                            if do_tokenize:
+                                q_tokens = word_tokenize(q.lower())
+                                for oi in range(len(optionABCD)):
+                                    optionABCD[oi] = word_tokenize(optionABCD[oi].lower())
+                            else:
+                                q_tokens = q
+
                             ans = ord(TrueAns) - ord('A')
                             datalist.append([context_tokens, q_tokens, optionABCD, ans])
                 return datalist
@@ -245,31 +275,35 @@ class TextData:
 
             print(len(dataset['train']), len(dataset['dev']), len(dataset['test']))
 
+            if not glove:
+                fdist = nltk.FreqDist(total_words)
+                sort_count = fdist.most_common(30000)
+                print('sort_count: ', len(sort_count))
 
-            # fdist = nltk.FreqDist(total_words)
-            # sort_count = fdist.most_common(30000)
-            # print('sort_count: ', len(sort_count))
-            #
-            # # nnn=8
-            # with open(self.vocfile, "w") as v:
-            #     for w, c in tqdm(sort_count):
-            #         # if nnn > 0:
-            #         #     print([(ord(w1),w1) for w1 in w])
-            #         #     nnn-= 1
-            #         if w not in [' ', '', '\n', '\r', '\r\n']:
-            #             v.write(w)
-            #             v.write(' ')
-            #             v.write(str(c))
-            #             v.write('\n')
-            #
-            #     v.close()
+                # nnn=8
+                with open(self.vocfile, "w") as v:
+                    for w, c in tqdm(sort_count):
+                        # if nnn > 0:
+                        #     print([(ord(w1),w1) for w1 in w])
+                        #     nnn-= 1
+                        if w not in [' ', '', '\n', '\r', '\r\n']:
+                            v.write(w)
+                            v.write(' ')
+                            v.write(str(c))
+                            v.write('\n')
 
-            self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(self.vocfile)
+                    v.close()
+            if glove:
+                self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(self.vocfile)
+            else:
+                self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile, vectordim=vec_dim)
+
             self.index2word_set = set(self.index2word)
 
             # self.raw_sentences = copy.deepcopy(dataset)
-            for setname in ['train', 'dev', 'test']:
-                dataset[setname] = [(self.TurnWordID(con), self.TurnWordID(q), [self.TurnWordID(c) for c in optionABCD], ansindex) for con, q ,optionABCD, ansindex in tqdm(dataset[setname])]
+            if do_tokenize:
+                for setname in ['train', 'dev', 'test']:
+                    dataset[setname] = [(self.TurnWordID(con), self.TurnWordID(q), [self.TurnWordID(c) for c in optionABCD], ansindex) for con, q ,optionABCD, ansindex in tqdm(dataset[setname])]
             # Saving
             print('Saving dataset...')
             self.saveDataset(self.data_dump_path, dataset)
@@ -314,7 +348,7 @@ class TextData:
         return datasets
 
 
-    def read_word2vec(self, vocfile ):
+    def read_word2vec(self, vocfile,vectordim=100 ):
         word2index = dict()
         word2index['PAD'] = 0
         word2index['START_TOKEN'] = 1
@@ -330,9 +364,12 @@ class TextData:
                 cnt += 1
 
         print(len(word2index),cnt)
+        index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(cnt)]
+        index2vector = np.asarray(index2vector)
+        index2word = [w for w, n in word2index.items()]
         # dic = {w:numpy.random.normal(size=[int(sys.argv[1])]).astype('float32') for w in word2index}
         print ('Dictionary Got!')
-        return word2index
+        return word2index, index2word, index2vector
 
     def read_word2vec_from_pretrained(self, embfile, topk_word_num=30000):
         word2index = dict()
@@ -431,3 +468,5 @@ class TextData:
             print()
         pass
 
+if __name__ == '__main__':
+    td = TextData(do_alltext=True)
