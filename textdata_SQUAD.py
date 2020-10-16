@@ -12,6 +12,12 @@ from nltk.tokenize import word_tokenize
 import jieba
 import json
 from Hyperparameters import args
+from transformers import BertTokenizer
+from transformers.data.processors.squad import SquadResult, SquadV1Processor, SquadV2Processor
+from transformers import (
+
+    squad_convert_examples_to_features,
+)
 class Batch:
     """Struct containing batches info
     """
@@ -40,21 +46,22 @@ class TextData:
         if corpusname == 'MCtest':
             self.tokenizer = word_tokenize
         elif corpusname == 'squad':
-            self.tokenizer = word_tokenize
+            self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
 
         if corpusname == 'squad':
-            self.datasets = self.loadCorpus_SQUAD()
+            # self.datasets = self.loadCorpus_SQUAD()
+            self.datasets = self.load_squad()
 
 
         print('set')
         # Plot some stats:
-        self._printStats(corpusname)
-
-        if args['playDataset']:
-            self.playDataset()
+        # self._printStats(corpusname)
+        #
+        # if args['playDataset']:
+        #     self.playDataset()
 
         self.batches = {}
 
@@ -253,16 +260,18 @@ class TextData:
                                     answer_text = answer['text']
                                     al[answer_start] = answer_text
 
-                                if not wiki_similar:
-                                    for s, t in al.items():
-                                        wiki_sim_file.write(t)
-                                        wiki_sim_file.write('\n')
-                                else:
-                                    RelSen, AnsSen = self.selectRelAnsSentences(con_sentences, al)
-                                    RepEnt = self.FindReplaceEntity(al)
-                                    RelSen = self.GetReferenceSentences(RelSen)
-                                    AnsSen = self.GetReferenceSentences(AnsSen)
-                                    datalist.append([context_tokens, question, al, RepEnt, RelSen, AnsSen])
+                                # if not wiki_similar:
+                                #     for s, t in al.items():
+                                #         wiki_sim_file.write(t)
+                                #         wiki_sim_file.write('\n')
+                                # else:
+                                #     RelSen, AnsSen = self.selectRelAnsSentences(con_sentences, al)
+                                #     RepEnt = self.FindReplaceEntity(al)
+                                #     RelSen = self.GetReferenceSentences(RelSen)
+                                #     AnsSen = self.GetReferenceSentences(AnsSen)
+                                #     datalist.append([context_tokens, question, al, RepEnt, RelSen, AnsSen])
+
+                                datalist.append(context_tokens, question, )
                 return datalist
 
             dataset['train'] = read_data_from_file(self.corpus_file_train)
@@ -314,21 +323,84 @@ class TextData:
 
         return  dataset, law_related_info
 
-    def saveDataset(self, filename, datasets, law_related_info):
+    def load_squad(self):
+        if args['datasetsize'] == '1.1':
+            self.basedir = '../MR/SQUAD/'
+            self.corpus_file_train = self.basedir + 'train-v1.1.json'
+            self.corpus_file_dev =  self.basedir + 'dev-v1.1.json'
+            self.data_dump_path = args['rootDir'] + '/SQUAD_1_bert.pkl'
+            # self.vocfile = args['rootDir'] + '/voc_squad_1.txt'
+            self.processor = SquadV1Processor()
+        elif args['datasetsize'] == '2.0':
+            self.basedir = '../MR/SQUAD/'
+            self.corpus_file_train = self.basedir + 'train-v2.0.json'
+            self.corpus_file_test =  self.basedir + 'dev-v2.0.json'
+            self.data_dump_path = args['rootDir'] + '/SQUAD_2_bert.pkl'
+            # self.vocfile = args['rootDir'] + '/voc_squad_2.txt'
+            self.processor = SquadV2Processor()
+
+        datasetExist = os.path.isfile(self.data_dump_path)
+        if not datasetExist:
+            datasets = {'train': {}, 'dev': {}, 'test': {}}
+            examples = self.processor.get_train_examples(self.basedir , filename='train-v1.1.json')
+            features, data = squad_convert_examples_to_features(
+                examples=examples,
+                tokenizer=self.tokenizer,
+                max_seq_length=384,
+                doc_stride=128,
+                max_query_length=64,
+                is_training=True,
+                return_dataset="pt",
+                threads=1,
+            )
+            datasets['train']['dataset'] = data
+            datasets['train']['features'] = features
+            datasets['train']['examples'] = examples
+
+            examples_dev = self.processor.get_dev_examples(self.basedir , filename='dev-v1.1.json')
+            features_dev, data_dev = squad_convert_examples_to_features(
+                examples=examples_dev,
+                tokenizer=self.tokenizer,
+                max_seq_length=384,
+                doc_stride=128,
+                max_query_length=64,
+                is_training=False,
+                return_dataset="pt",
+                threads=1,
+            )
+            datasets['dev']['dataset'] = data_dev
+            datasets['dev']['features'] = features_dev
+            datasets['dev']['examples'] = examples_dev
+            print('Saving dataset...')
+            self.saveDataset(self.data_dump_path, datasets, dataonly=True)  # Saving tf samples
+
+        else:
+            datasets = self.loadDataset(self.data_dump_path, dataonly=True)
+            # print('train size:\t', len(dataset['train']))
+            # print('test size:\t', len(dataset['test']))
+            print('loaded')
+        return datasets
+
+
+    def saveDataset(self, filename, datasets, dataonly = False):
         """Save samples to file
         Args:
             filename (str): pickle filename
         """
         with open(os.path.join(filename), 'wb') as handle:
-            data = {  # Warning: If adding something here, also modifying loadDataset
-                'word2index': self.word2index,
-                'index2word': self.index2word,
-                'datasets': datasets,
-                'lawinfo' : law_related_info
-            }
+            if dataonly:
+                data = {
+                    'datasets': datasets
+                }
+            else:
+                data = {  # Warning: If adding something here, also modifying loadDataset
+                    'word2index': self.word2index,
+                    'index2word': self.index2word,
+                    'datasets': datasets
+                }
             pickle.dump(data, handle, -1)  # Using the highest protocol available
 
-    def loadDataset(self, filename):
+    def loadDataset(self, filename, dataonly = False):
         """Load samples from file
         Args:
             filename (str): pickle filename
@@ -337,13 +409,13 @@ class TextData:
         print('Loading dataset from {}'.format(dataset_path))
         with open(dataset_path, 'rb') as handle:
             data = pickle.load(handle)  # Warning: If adding something here, also modifying saveDataset
-            self.word2index = data['word2index']
-            self.index2word = data['index2word']
+            if not dataonly:
+                self.word2index = data['word2index']
+                self.index2word = data['index2word']
+                self.index2word_set = set(self.index2word)
             datasets = data['datasets']
-            law_related_info = data['lawinfo']
 
-        self.index2word_set = set(self.index2word)
-        return  datasets, law_related_info
+        return  datasets
 
 
     def read_word2vec(self, vocfile ):
