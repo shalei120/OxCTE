@@ -12,8 +12,8 @@ from nltk.tokenize import word_tokenize
 import jieba
 import json,torch
 from Hyperparameters import args
-# from transformers import BertTokenizer
-from transformers import AlbertTokenizer
+from transformers import BertTokenizer
+# from transformers import AlbertTokenizer
 class Batch:
     """Struct containing batches info
     """
@@ -38,6 +38,11 @@ class Batch:
         self.D_tokens = []
         self.D_tokens_mask = []
 
+        self.A_segment_ids = []
+        self.B_segment_ids = []
+        self.C_segment_ids = []
+        self.D_segment_ids = []
+
 
 
 class Eval_TextData:
@@ -52,8 +57,8 @@ class Eval_TextData:
             args: parameters of the model
         """
 
-        # self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
-        self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2', do_lower_case=True)
+        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', do_lower_case=True)
+        # self.tokenizer = AlbertTokenizer.from_pretrained('albert-base-v2', do_lower_case=True)
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
         self.datasets = self.loadCorpus()
@@ -137,6 +142,7 @@ class Eval_TextData:
         # Create empty lists to store outputs
         input_ids = []
         attention_masks = []
+        segment_ids = []
         # print(self.tokenizer.sep_token_id,self.tokenizer.sep_token)
         # For every sentence...
         for context, q, opt in zip(datalist[0],datalist[1],datalist[2]):
@@ -147,29 +153,47 @@ class Eval_TextData:
             #    (4) Map tokens to their IDs
             #    (5) Create attention mask
             #    (6) Return a dictionary of outputs
-            context = self.tokenizer.encode(' '.join(context), add_special_tokens=False, truncation=True, max_length=512)
-            q = self.tokenizer.encode(' '.join(q), add_special_tokens=False, truncation=True, max_length=512)
+            # print(len(context))
+            context = self.tokenizer.encode(' '.join(context), add_special_tokens=False, truncation=True, max_length=maxlen)
+            # print(context)
+            q = self.tokenizer.encode(' '.join(q), add_special_tokens=False, truncation=True, max_length=maxlen)
+            # print(q)
             opt= self.tokenizer.encode(' '.join(opt), add_special_tokens=False, truncation=False)
             self._truncate_seq_tuple(context, q, opt, maxlen - 4)
-            encoded_sent = self.tokenizer.encode_plus(
-                text=context + [self.tokenizer.sep_token] + q  + [self.tokenizer.sep_token] + opt,  # Preprocess sentence
-                add_special_tokens=True,  # Add `[CLS]` and `[SEP]`
-                max_length=maxlen,  # Max length to truncate/pad
-                pad_to_max_length=True,  # Pad sentence to max length
-                truncation = True,
-                # return_tensors='pt',           # Return PyTorch tensor
-                return_attention_mask=True  # Return attention mask
-            )
+
+
+            # encoded_sent = self.tokenizer.encode_plus(
+            #     text=context + [self.tokenizer.sep_token_id] + q  + [self.tokenizer.sep_token_id] + opt,  # Preprocess sentence
+            #     add_special_tokens=True,  # Add `[CLS]` and `[SEP]`
+            #     max_length=maxlen,  # Max length to truncate/pad
+            #     pad_to_max_length=True,  # Pad sentence to max length
+            #     truncation = True,
+            #     # return_tensors='pt',           # Return PyTorch tensor
+            #     return_attention_mask=True  # Return attention mask
+            # )
+            encoded_sent = {}
+            encoded_sent['input_ids'] = [self.tokenizer.cls_token_id]  + opt + [self.tokenizer.sep_token_id] + q  + [self.tokenizer.sep_token_id] + context + [self.tokenizer.sep_token_id]
+            encoded_sent['attention_mask'] = [1]*len(encoded_sent['input_ids'])
+            encoded_sent['seg_ids'] =[0]*(len(q)+1+len(opt)+1) + [1]*(len(context)+2)
+            iid_len = len(encoded_sent['input_ids'])
+            while iid_len < maxlen:
+                encoded_sent['input_ids'].append(self.tokenizer.pad_token_id)
+                encoded_sent['attention_mask'].append(0)
+                encoded_sent['seg_ids'].append(0)
+                iid_len+=1
 
             # Add the outputs to the lists
             input_ids.append(encoded_sent.get('input_ids'))
             attention_masks.append(encoded_sent.get('attention_mask'))
+            segment_ids.append(encoded_sent.get('seg_ids'))
 
         # Convert lists to tensors
+        # print(input_ids)
         input_ids = torch.tensor(input_ids).to(args['device'])
         attention_masks = torch.tensor(attention_masks).to(args['device'])
+        segment_ids = torch.tensor(segment_ids).to(args['device'])
 
-        return input_ids, attention_masks
+        return input_ids, attention_masks, segment_ids
 
     def _createBatch(self, samples):
         """Create a single batch from the list of sample. The batch size is automatically defined by the number of
@@ -208,10 +232,16 @@ class Eval_TextData:
         # batch.B_tokens, batch.B_tokens_mask = self.preprocessing_for_bert(optionB_batch)
         # batch.C_tokens, batch.C_tokens_mask = self.preprocessing_for_bert(optionC_batch)
         # batch.D_tokens, batch.D_tokens_mask = self.preprocessing_for_bert(optionD_batch)
-        batch.A_tokens, batch.A_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionA_batch), 512)
-        batch.B_tokens, batch.B_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionB_batch), 512)
-        batch.C_tokens, batch.C_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionC_batch), 512)
-        batch.D_tokens, batch.D_tokens_mask = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionD_batch), 512)
+        batch.A_tokens, batch.A_tokens_mask, batch.A_segment_ids = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionA_batch), 512)
+        batch.B_tokens, batch.B_tokens_mask, batch.B_segment_ids = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionB_batch), 512)
+        batch.C_tokens, batch.C_tokens_mask, batch.C_segment_ids = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionC_batch), 512)
+        batch.D_tokens, batch.D_tokens_mask, batch.D_segment_ids = self.preprocessing_seqs_for_bert((context_tokens_batch, q_tokens_batch, optionD_batch), 512)
+
+        # print(batch.A_tokens[0])
+        # print(batch.B_tokens[0])
+        # print(batch.C_tokens[0])
+        # print(batch.D_tokens[0])
+        # exit()
         batch.label = torch.LongTensor(ans_batch).to(args['device'])
 
         return batch
