@@ -40,60 +40,58 @@ class BERT_Model_squad(nn.Module):
         self.sigmoid = nn.Sigmoid()
         # Instantiate BERT model
         self.hidden_size = 768
-        self.bert = BertForQuestionAnswering.from_pretrained('bert-base-uncased')
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
+        self.qa_outputs = nn.Linear(self.hidden_size, 2)
         # self.W = Parameter(torch.rand([self.hidden_size , self.hidden_size]))
-        self.indexsequence = torch.LongTensor(list(range(args['maxLength']))).to(args['device'])
-        self.classifier = nn.Sequential(
-            nn.Linear(self.hidden_size, 100),
-            nn.ReLU(),
-            # nn.Dropout(0.5),
-            nn.Linear(100, 1)
-        )
+        # self.indexsequence = torch.LongTensor(list(range(args['maxLength']))).to(args['device'])
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(self.hidden_size, 100),
+        #     nn.ReLU(),
+        #     # nn.Dropout(0.5),
+        #     nn.Linear(100, 1)
+        # )
 
     def build(self, x):
-        # print(x.context_tokens.shape, x.question_tokens.shape, x.A_tokens.shape)
-        # cqa_outputs = self.bert(input_ids=torch.cat([x.context_tokens, x.question_tokens], dim = 1),
-        #                     attention_mask=torch.cat([x.context_tokens_mask, x.question_tokens_mask], dim = 1))
-        # # Extract the last hidden state of the token `[CLS]` for classification task
-        # cqa_last_hidden_state_cls = cqa_outputs[0][:, 0, :]
-
-
-        # cqb_outputs = self.bert(input_ids=torch.cat([x.context_tokens, x.question_tokens, x.B_tokens], dim = 1),
-        #                     attention_mask=torch.cat([x.context_tokens_mask, x.question_tokens_mask, x.B_tokens_mask], dim = 1))
-        # # Extract the last hidden state of the token `[CLS]` for classification task
-        # cqb_last_hidden_state_cls = cqb_outputs[0][:, 0, :]
-        # cqc_outputs = self.bert(input_ids=torch.cat([x.context_tokens, x.question_tokens, x.C_tokens], dim=1),
-        #                         attention_mask=torch.cat(
-        #                             [x.context_tokens_mask, x.question_tokens_mask, x.C_tokens_mask], dim=1))
-        # # Extract the last hidden state of the token `[CLS]` for classification task
-        # cqc_last_hidden_state_cls = cqc_outputs[0][:, 0, :]
-        #
-        # cqd_outputs = self.bert(input_ids=torch.cat([x.context_tokens, x.question_tokens, x.D_tokens], dim=1),
-        #                         attention_mask=torch.cat(
-        #                             [x.context_tokens_mask, x.question_tokens_mask, x.D_tokens_mask], dim=1))
-        # # Extract the last hidden state of the token `[CLS]` for classification task
-        # cqd_last_hidden_state_cls = cqd_outputs[0][:, 0, :]
-
-
-
-        # q_outputs = self.bert(input_ids=x.question_tokens,
-        #                     attention_mask=x.question_tokens_mask)
-        # q_last_hidden_state_cls = q_outputs[0][:, 0, :]
         outputs = self.bert(**x)
-        # print(len(outputs))
-        # loss, start_logits, end_logits = outputs
+
+        input_ids= x['input_ids']
+        attention_mask= x['attention_mask']
+        token_type_ids=   x['input_ids']
+        start_positions= x['start_positions']
+        end_positions= x['end_positions']
+
+        sequence_output = outputs[0]
+
+        logits = self.qa_outputs(sequence_output)
+        start_logits, end_logits = logits.split(1, dim=-1)
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
+
+        total_loss = None
+        # If we are on multi-GPU, split add a dimension
+        if len(start_positions.size()) > 1:
+            start_positions = start_positions.squeeze(-1)
+        if len(end_positions.size()) > 1:
+            end_positions = end_positions.squeeze(-1)
+        # sometimes the start/end positions are outside our model inputs, we ignore these terms
+        ignored_index = start_logits.size(1)
+        start_positions.clamp_(0, ignored_index)
+        end_positions.clamp_(0, ignored_index)
+
+        loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+        start_loss = loss_fct(start_logits, start_positions)
+        end_loss = loss_fct(end_logits, end_positions)
+        total_loss = (start_loss + end_loss) / 2
 
 
-        return outputs
+        return total_loss, start_logits, end_logits
 
 
     def forward(self, x):
         outputs = self.build(x)
         loss, start_logits, end_logits = outputs
-        return loss
+        return loss, start_logits, end_logits
 
     def predict(self, x):
-        output = self.build(x)
-        start_logits = output[0]
-        end_logits = output[1]
-        return start_logits, end_logits
+        loss, start_logits, end_logits  = self.build(x)
+        return loss, start_logits, end_logits

@@ -245,10 +245,13 @@ class Runner:
                 "input_ids": batch[0],
                 "attention_mask": batch[1],
                 "token_type_ids": batch[2],
+                    "start_positions": batch[3],
+                    "end_positions": batch[4],
             }
             # Compute logits
             with torch.no_grad():
-                start_logits, end_logits = model.predict(inputs)
+                loss, start_logits, end_logits = model.predict(inputs)
+
 
             feature_indices = batch[3]
             for i, feature_index in enumerate(feature_indices):
@@ -260,7 +263,7 @@ class Runner:
 
                 all_results.append(result)
 
-            # val_loss.append(loss.item())
+            val_loss.append(loss.item())
 
             # print(preds, batch.label)
 
@@ -286,10 +289,10 @@ class Runner:
         results = squad_evaluate(datasets['examples'], predictions)
         # print(results)
         # Compute the average accuracy and loss over the validation set.
-        # val_loss = np.mean(val_loss)
+        val_loss = np.mean(val_loss)
         # val_accuracy = np.mean(val_accuracy)
 
-        return -1, results
+        return val_loss, results
 
 
 if __name__ == '__main__':
