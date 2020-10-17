@@ -25,6 +25,12 @@ from Hyperparameters import args
 from BERT_model_squad import BERT_Model_squad as BERT_Model
 from torch.utils.data import DataLoader,RandomSampler,SequentialSampler
 from transformers.data.processors.squad import SquadResult
+from transformers.data.metrics.squad_metrics import (
+    compute_predictions_log_probs,
+    compute_predictions_logits,
+    squad_evaluate,
+)
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
 parser.add_argument('--modelarch', '-m')
@@ -71,7 +77,7 @@ class Runner:
         args['datasetsize'] = '1.1'
 
         self.textData = TextData('squad')
-        args['batchSize'] = 256
+        args['batchSize'] = 36
         # self.start_token = self.textData.word2index['START_TOKEN']
         # self.end_token = self.textData.word2index['END_TOKEN']
         # args['vocabularySize'] = self.textData.getVocabularySize()
@@ -111,7 +117,7 @@ class Runner:
         train_sampler = RandomSampler(datasets['dataset'])
         features = datasets['features']
         # args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
-        train_dataloader = DataLoader(datasets['dataset'], sampler=train_sampler, batch_size=12)
+        train_dataloader = DataLoader(datasets['dataset'], sampler=train_sampler, batch_size=args['batchSize'])
 
         val_loss, val_accuracy = self.evaluate(self.model)
         print(val_accuracy)
@@ -137,6 +143,7 @@ class Runner:
                 batch_counts += 1
                 optimizer.zero_grad()
                 # loss = self.model(batch)  # batch seq_len outsize
+                batch = tuple(t.to(args['device']) for t in batch)
                 inputs = {
                     "input_ids": batch[0],
                     "attention_mask": batch[1],
@@ -144,7 +151,7 @@ class Runner:
                     "start_positions": batch[3],
                     "end_positions": batch[4],
                 }
-                loss, start_logits, end_logits  = self.model.predict(inputs)
+                loss = self.model(inputs)
                 # result = SquadResult(unique_id, start_logits, end_logits)
                 # all_results.append(result)
 
@@ -158,7 +165,7 @@ class Runner:
                 # scheduler.step()
 
                 # Print the loss values and time elapsed for every 20 batches
-                if (step % 20 == 0 and step != 0) or (step == len(batches) - 1):
+                if (step % 20 == 0 and step != 0) or (step == len(train_dataloader) - 1):
                     # Calculate time elapsed for 20 batches
                     time_elapsed = time.time() - t0_batch
 
@@ -188,7 +195,7 @@ class Runner:
             # results = squad_evaluate(datasets['examples'], predictions)
             # print(results)
             # Calculate the average loss over the entire training data
-            avg_train_loss = total_loss / len(batches)
+            avg_train_loss = total_loss / len(train_dataloader)
 
             print("-" * 70)
             # =======================================
@@ -200,9 +207,8 @@ class Runner:
 
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
-
-            print(
-                f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_accuracy:^9.2f} | {time_elapsed:^9.2f}")
+            print(val_accuracy)
+            print(f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {0:^9.2f} | {time_elapsed:^9.2f}")
             print("-" * 70)
             print("\n")
 
@@ -221,16 +227,20 @@ class Runner:
         datasets = self.textData.datasets['dev']
         features = datasets['features']
         eval_sampler = SequentialSampler(datasets['dataset'])
-        dev_dataloader = DataLoader(datasets['dataset'], sampler=eval_sampler, batch_size=12)
+        dev_dataloader = DataLoader(datasets['dataset'], sampler=eval_sampler, batch_size=args['batchSize'])
         n_iters = len(datasets['dataset'])
 
         # Tracking variables
         val_accuracy = []
         val_loss = []
-
+        prefix="pp"
+        output_prediction_file = os.path.join(args['rootDir'], "predictions_{}.json".format(prefix))
+        output_nbest_file = os.path.join(args['rootDir'], "nbest_predictions_{}.json".format(prefix))
+        output_null_log_odds_file = os.path.join(args['rootDir'], "null_odds_{}.json".format(prefix))
         all_results = []
         # For each batch in our validation set...
         for batch in dev_dataloader:
+            batch = tuple(t.to(args['device']) for t in batch)
             inputs = {
                 "input_ids": batch[0],
                 "attention_mask": batch[1],
@@ -262,15 +272,15 @@ class Runner:
             datasets['examples'],
             datasets['features'],
             all_results,
-            args.n_best_size,
-            args.max_answer_length,
-            args.do_lower_case,
+            20,
+            30,
+            True,
             output_prediction_file,
             output_nbest_file,
             output_null_log_odds_file,
-            args.verbose_logging,
-            args.version_2_with_negative,
-            args.null_score_diff_threshold,
+            True,
+            True,
+            0.0,
             self.textData.tokenizer,
         )
         results = squad_evaluate(datasets['examples'], predictions)

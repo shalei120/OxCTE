@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.parameter import Parameter
-# from transformers import BertModel
-from transformers import AlbertTokenizer, AlbertModel
+from transformers import BertModel,BertTokenizer
+# from transformers import AlbertTokenizer, AlbertModel
 import numpy as np
 
 import datetime
@@ -40,14 +40,15 @@ class BERT_Model(nn.Module):
         self.sigmoid = nn.Sigmoid()
         # Instantiate BERT model
         self.hidden_size = 768
-        self.bert = AlbertModel.from_pretrained('albert-base-v2')
+        self.bert = BertModel.from_pretrained('albert-base-v2')
+        self.bert.train()
         # self.W = Parameter(torch.rand([self.hidden_size , self.hidden_size]))
         self.indexsequence = torch.LongTensor(list(range(args['maxLength']))).to(args['device'])
         self.classifier = nn.Sequential(
-            nn.Linear(self.hidden_size, 100),
-            nn.ReLU(),
-            # nn.Dropout(0.5),
-            nn.Linear(100, 1)
+            nn.Linear(self.hidden_size, 1),
+            # nn.ReLU(),
+            # # nn.Dropout(0.5),
+            # nn.Linear(100, 1)
         )
 
     def build(self, x):
@@ -80,17 +81,23 @@ class BERT_Model(nn.Module):
         #                     attention_mask=x.question_tokens_mask)
         # q_last_hidden_state_cls = q_outputs[0][:, 0, :]
 
+        # print(x.A_tokens.size())
         a_outputs = self.bert(input_ids=x.A_tokens,
-                              attention_mask=x.A_tokens_mask)
+                              attention_mask=x.A_tokens_mask,
+                              token_type_ids = x.A_segment_ids)
+        # exit()
         a_last_hidden_state_cls = a_outputs[0][:, 0, :]
         b_outputs = self.bert(input_ids=x.B_tokens,
-                              attention_mask=x.B_tokens_mask)
+                              attention_mask=x.B_tokens_mask,
+                              token_type_ids = x.B_segment_ids)
         b_last_hidden_state_cls = b_outputs[0][:, 0, :]
         c_outputs = self.bert(input_ids=x.C_tokens,
-                              attention_mask=x.C_tokens_mask)
+                              attention_mask=x.C_tokens_mask,
+                              token_type_ids = x.C_segment_ids)
         c_last_hidden_state_cls = c_outputs[0][:, 0, :]
         d_outputs = self.bert(input_ids=x.D_tokens,
-                              attention_mask=x.D_tokens_mask)
+                              attention_mask=x.D_tokens_mask,
+                              token_type_ids = x.D_segment_ids)
         d_last_hidden_state_cls = d_outputs[0][:, 0, :]
 
         # con_q = torch.cat([context_last_hidden_state_cls, q_last_hidden_state_cls], dim = 1) # batch 2len

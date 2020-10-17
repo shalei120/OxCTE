@@ -115,7 +115,7 @@ class Runner:
             self.model.train()
             for step, batch in enumerate(batches):
                 batch_counts +=1
-                self.model.zero_grad()
+                optimizer.zero_grad()
                 loss = self.model(batch)  # batch seq_len outsize
                 batch_loss += loss.item()
                 total_loss += loss.item()
