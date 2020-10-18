@@ -36,12 +36,10 @@ parser.add_argument('--gpu', '-g')
 parser.add_argument('--modelarch', '-m')
 cmdargs = parser.parse_args()
 
-usegpu = True
 
 if cmdargs.gpu is None:
-    usegpu = False
+    args['device'] = 'cpu'
 else:
-    usegpu = True
     args['device'] = 'cuda:' + str(cmdargs.gpu)
 #
 if cmdargs.modelarch is None:
@@ -245,12 +243,12 @@ class Runner:
                 "input_ids": batch[0],
                 "attention_mask": batch[1],
                 "token_type_ids": batch[2],
-                    "start_positions": batch[3],
-                    "end_positions": batch[4],
+                    # "start_positions": batch[3],
+                    # "end_positions": batch[4],
             }
             # Compute logits
             with torch.no_grad():
-                loss, start_logits, end_logits = model.predict(inputs)
+                start_logits, end_logits = model.predict(inputs)
 
 
             feature_indices = batch[3]
@@ -263,7 +261,7 @@ class Runner:
 
                 all_results.append(result)
 
-            val_loss.append(loss.item())
+            # val_loss.append(loss.item())
 
             # print(preds, batch.label)
 
@@ -289,10 +287,10 @@ class Runner:
         results = squad_evaluate(datasets['examples'], predictions)
         # print(results)
         # Compute the average accuracy and loss over the validation set.
-        val_loss = np.mean(val_loss)
+        # val_loss = np.mean(val_loss)
         # val_accuracy = np.mean(val_accuracy)
 
-        return val_loss, results
+        return -1, results
 
 
 if __name__ == '__main__':
