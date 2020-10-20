@@ -77,6 +77,7 @@ class Encoder(nn.Module):
         # print('sdfw',inputs.shape, self.batch_size)
         # packed_input = nn.utils.rnn.pack_padded_sequence(inputs, input_len)
         packed_input = inputs #  seq batch hid
+        # print(inputs.size())
         packed_out, hidden = self.enc_unit(packed_input, hidden)
         # if np.isnan(packed_out.data).any()>0:
         #     sdf=0
