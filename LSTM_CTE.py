@@ -100,7 +100,7 @@ class LSTM_CTE_Model(nn.Module):
         y_hard = (y_hard - y).detach() + y
         return y_hard, y
 
-    def build(self, x):
+    def build(self, x, eps=1e-6):
         '''
         :param encoderInputs: [batch, enc_len]
         :param decoderInputs: [batch, dec_len]
@@ -128,7 +128,8 @@ class LSTM_CTE_Model(nn.Module):
         # en_q_output_flat = en_q_output.transpose(0,1).reshape(batch_size,-1)
 
         attentioned_context = dot_product_attention(query=en_context_output, key=en_q_output, value=en_q_output, projection_matrix = self.att_projection_matrix) # b s h
-
+        # print(attentioned_context)
+        # exit()
 
         # opt_input_embed =[]
         # for i in range(4):
@@ -166,18 +167,23 @@ class LSTM_CTE_Model(nn.Module):
         # out_info, _ = self.encoder2(q_info_cat_info_con) # b c e
         out_info, _ = self.encoder2(attentioned_context) # b c e
 
-        sentence_embs = torch.einsum('bce,bsc->bse', out_info, sentence_mask) / sentence_mask.sum(2, keepdim=True)
+        sentence_embs = torch.einsum('bce,bsc->bse', out_info, sentence_mask) / (sentence_mask.sum(2, keepdim=True)+eps)
+        # print(sentence_embs)
         sentence_probs = self.SentenceClassifier(sentence_embs * context_mask.unsqueeze(2)) # batch sentence
         sentence_sample, _ = self.gumbel_softmax(sentence_probs)
         # print(sentence_embs.size(), sentence_sample.size())
         decoder_input = torch.einsum('bse,bs->be', sentence_embs, sentence_sample.squeeze())
         en_state = self.decoder.vector2state(decoder_input)
+        # print(en_state)
         de_outputs = self.decoder(en_state, answer_dec, answer_tar)
+        # print(de_outputs)
         recon_loss = self.CEloss(torch.transpose(de_outputs, 1, 2), answer_dec)
         mask = torch.sign(answer_tar.float())
         recon_loss = torch.squeeze(recon_loss) * mask
 
         recon_loss_mean = torch.mean(recon_loss)
+        # print(recon_loss_mean)
+        # exit()
         return recon_loss_mean, en_state
 
     def forward(self, x ):
@@ -187,4 +193,4 @@ class LSTM_CTE_Model(nn.Module):
     def predict(self, x):
         loss, en_state = self.build(x)
         de_words = self.decoder.generate(en_state)
-        return de_words
+        return loss, de_words

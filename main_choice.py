@@ -74,7 +74,7 @@ class Runner:
 
         self.textData = td_race_cte(model_type='lstm')
         args['batchSize'] = 256
-        args['model_arch'] = 'lstm_cte'
+        # args['model_arch'] = 'lstm_cte'
         self.start_token = self.textData.word2index['START_TOKEN']
         self.end_token = self.textData.word2index['END_TOKEN']
         args['vocabularySize'] = self.textData.getVocabularySize()
@@ -165,13 +165,13 @@ class Runner:
             # =======================================
             # After the completion of each training epoch, measure the model's performance
             # on our validation set.
-            val_loss, val_accuracy = self.evaluate(self.model)
+            val_bleu, val_loss = self.evaluate(self.model)
 
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
             print(
-                f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_accuracy:^9.2f} | {time_elapsed:^9.2f}")
+                f"{epoch_i + 1:^7} | {'-':^7} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {time_elapsed:^9.2f}")
             print("-" * 70)
             print("\n")
 
@@ -190,14 +190,14 @@ class Runner:
         # Tracking variables
         val_accuracy = []
         val_loss = []
-        pred_ans_batches = []  # cnn
+        pred_ans = []  # cnn
         gold_ans = []
         # For each batch in our validation set...
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                decoded_words = model.predict(batch)
-                pred_ans_batches.append(decoded_words)
+                loss ,decoded_words = model.predict(batch)
+                pred_ans.extend(decoded_words)
 
             gold_ans.extend([[r] for r in batch.raw_ans])
             # print(preds, batch.label)
@@ -205,13 +205,17 @@ class Runner:
             # Calculate the accuracy rate
             # accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
             # val_accuracy.append(accuracy)
+            val_loss.append(loss.item())
+
+        for i in range(10):
+            print(gold_ans[i][0], pred_ans[i])
 
         bleu = self.get_corpus_BLEU(gold_ans, pred_ans)
         # Compute the average accuracy and loss over the validation set.
-        # val_loss = np.mean(val_loss)
+        val_loss = np.mean(val_loss)
         # val_accuracy = np.mean(val_accuracy)
 
-        return bleu
+        return bleu, val_loss
 
     def get_sentence_BLEU(self, actual_word_lists, generated_word_lists):
         bleu_scores = self.get_corpus_bleu_scores([actual_word_lists], [generated_word_lists])
@@ -222,10 +226,11 @@ class Runner:
 
     def get_corpus_BLEU(self, actual_word_lists, generated_word_lists):
         bleu_scores = self.get_corpus_bleu_scores(actual_word_lists, generated_word_lists)
-        sumss = 0
-        for s in bleu_scores:
-            sumss += 0.25 * bleu_scores[s]
-        return sumss
+        # sumss = 0
+        # for s in bleu_scores:
+        #     sumss += 0.25 * bleu_scores[s]
+        # return sumss
+        return bleu_scores[1]
 
     def get_corpus_bleu_scores(self, actual_word_lists, generated_word_lists):
         bleu_score_weights = {

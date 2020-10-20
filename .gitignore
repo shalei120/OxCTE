@@ -8,6 +8,8 @@ cached_test_bert-base-uncased_384
 *.out
 artifacts/
 runs/
+models_bert/
+
 # C extensions
 *.so
 

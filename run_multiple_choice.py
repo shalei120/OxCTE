@@ -90,7 +90,7 @@ def main():
 
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-    training_args.no_cuda = True
+    # training_args.no_cuda = True
 
     if (
         os.path.exists(training_args.output_dir)
