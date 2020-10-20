@@ -41,6 +41,7 @@ class Decoder(nn.Module):
 
         self.out_unit = nn.Linear(args['hiddenSize'], args['vocabularySize'])
         self.logsoftmax = nn.LogSoftmax(dim = -1)
+        self.v2state_linear= nn.Linear(args['hiddenSize'],args['dec_numlayer'] * args['hiddenSize'] * 2)
 
         self.element_len = args['hiddenSize']
 
@@ -48,14 +49,13 @@ class Decoder(nn.Module):
 
     def vector2state(self, vector):
         batchsize = vector.size()[0]
-        self.v2state_linear= nn.Linear(vector.shape[-1],args['dec_numlayer'] * args['hiddenSize'] * 2)
         raw_state = self.v2state_linear(vector)
         # print(vector.size(), raw_state.size())
         h,c = raw_state.split(args['dec_numlayer'] * args['hiddenSize'], dim = -1)
         # print(h.size(), c.size())
-        h = h.reshape([batchsize, args['dec_numlayer'], args['hiddenSize']]).transpose(0,1)
-        c = c.reshape([batchsize, args['dec_numlayer'], args['hiddenSize']]).transpose(0,1)
-        en_state  = (h,c)
+        h = h.reshape([batchsize, args['dec_numlayer'], args['hiddenSize']]).transpose(0,1).contiguous()
+        c = c.reshape([batchsize, args['dec_numlayer'], args['hiddenSize']]).transpose(0,1).contiguous()
+        en_state  = (h.to(args['device']),c.to(args['device']))
 
         return en_state
 

@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import functools
 import numpy as np
+from Hyperparameters import args
 
 
 def generalized_kernel_feature_creator(data, projection_matrix,normalize_data, kernel_fn = nn.ReLU(), kernel_epsilon = 0.001):
@@ -80,7 +81,7 @@ def dot_product_attention(query, key, value, projection_matrix, kernel_feature_c
             return result
         else:
             # Unidirectional, normalized attention.
-            thick_all_ones = torch.ones([seqlen])
+            thick_all_ones = torch.ones([seqlen]).to(args['device'])
 
             index = attention_dims_t[0]
             t_slice_shape = key_prime.shape[0:len(batch_dims_t)] + (
@@ -103,7 +104,7 @@ def dot_product_attention(query, key, value, projection_matrix, kernel_feature_c
             return result
         else:
             # Bidirectional, normalized attention.
-            thick_all_ones = torch.ones([key.shape[1]])
+            thick_all_ones = torch.ones([key.shape[1]]).to(args['device'])
             # Construct T = (K^{'})^{T} 1_L
             # k (bs, <non-attention dims>, num_heads, <attention dims>, channels)
             # print(key_prime.size(), thick_all_ones.size())
