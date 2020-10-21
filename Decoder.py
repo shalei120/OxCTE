@@ -77,8 +77,8 @@ class Decoder(nn.Module):
         self.batch_size = en_state[0].size()[1]
         de_words = self.decoder_g(en_state)
         for k in range(len(de_words)):
-            if '<EOS>' in de_words[k]:
-                ind = de_words[k].index('<EOS>')
+            if 'END_TOKEN' in de_words[k]:
+                ind = de_words[k].index('END_TOKEN')
                 de_words[k] = de_words[k][:ind]
         return de_words
 
