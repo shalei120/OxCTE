@@ -32,8 +32,11 @@ class Batch:
         self.ans_lens = []
         self.context_mask = []
         self.sentence_mask = []
+        self.optionSeqs = [[],[],[],[]]
+        self.option_lens = [[],[],[],[]]
 
         self.raw_ans = []
+        self.core_sen_ids = []
 
 class TextData:
     """Dataset class
@@ -89,7 +92,7 @@ class TextData:
         # Create the batch tensor
         for i in range(batchSize):
             # Unpack the sample
-            context_tokens, q_tokens, option, sentence_info, option_raw = samples[i]
+            context_tokens, q_tokens, option, sentence_info, option_raw, optionABCD, ans, core_sen_id = samples[i]
 
             if len(context_tokens) > args['maxLengthEnco']:
                 context_tokens = context_tokens[:args['maxLengthEnco']]
@@ -102,6 +105,11 @@ class TextData:
             batch.ans_lens.append(len(option))
             batch.raw_ans.append(option_raw)
             sentence_num_max = max(sentence_num_max, len(sentence_info))
+            batch.label.append(ans)
+            batch.core_sen_ids.append(core_sen_id)
+            for j in range(4):
+                batch.optionSeqs[j].append(optionABCD[j])
+                batch.option_lens[j].append(len(batch.optionSeqs[j][i]))
 
         maxlen_con = max(batch.context_lens)
         maxlen_q = max(batch.question_lens)
@@ -197,12 +205,14 @@ class TextData:
 
         words = []
         sentence_lens = []
+        sentences = []
         for sen in sens:
             sen_token = self.tokenizer(sen)
             words.extend(sen_token)
             sentence_lens.append(len(sen_token))
+            sentences.append(sen_token)
 
-        return words, sentence_lens
+        return words, sentence_lens, sentences
 
 
 
@@ -222,6 +232,39 @@ class TextData:
 
         return rel_sens, ans_sens
 
+    def __lcs(self, X, Y):
+        # find the length of the strings
+        m = len(X)
+        n = len(Y)
+
+        # declaring the array for storing the dp values
+        L = [[0] * (n + 1) for i in range(m + 1)]
+
+        """Following steps build L[m + 1][n + 1] in bottom up fashion 
+        Note: L[i][j] contains length of LCS of X[0..i-1] 
+        and Y[0..j-1]"""
+        for i in range(m + 1):
+            for j in range(n + 1):
+                if i == 0 or j == 0:
+                    L[i][j] = 0
+                elif X[i - 1] == Y[j - 1]:
+                    L[i][j] = L[i - 1][j - 1] + 1
+                else:
+                    L[i][j] = max(L[i - 1][j], L[i][j - 1])
+
+                    # L[m][n] contains the length of LCS of X[0..n-1] & Y[0..m-1]
+        return L[m][n]
+
+    def FindCoreSentence(self, sentences_list, option):
+        maxlen = -1
+        index = -1
+        for i, sen in enumerate(sentences_list):
+            cs = self.__lcs(sen, option)
+            if maxlen < cs:
+                maxlen = cs
+                index = i
+
+        return index
 
 
     def loadCorpus(self, genre = 'high', glove = True, model_type = 'bert', vec_dim = args['embeddingSize']):
@@ -262,7 +305,7 @@ class TextData:
                         q_list = passages_json['questions']
                         context = passages_json['article'].lower()
                         if model_type == 'lstm':
-                            context_tokens, sentence_info = self.CutContext(context)
+                            context_tokens, sentence_info, sentences_list = self.CutContext(context)
 
                         for q, optionABCD, TrueAns in zip(q_list, option_list, answer_list):
                             if model_type == 'lstm':
@@ -283,7 +326,8 @@ class TextData:
                                 )
 
                             ans = ord(TrueAns) - ord('A')
-                            datalist.append([context_tokens, q_tokens, optionABCD[ans], sentence_info])
+                            core_sen_id = self.FindCoreSentence(sentences_list, optionABCD[ans])
+                            datalist.append([context_tokens, q_tokens, optionABCD, sentence_info, ans, core_sen_id])
                 return datalist
 
             dataset['train'] = read_data_from_folder(self.corpus_file_train)
@@ -321,7 +365,7 @@ class TextData:
             # self.raw_sentences = copy.deepcopy(dataset)
             if model_type == 'lstm':
                 for setname in ['train', 'dev', 'test']:
-                    dataset[setname] = [(self.TurnWordID(con), self.TurnWordID(q), self.TurnWordID(option), sentence_info, option) for con, q ,option, sentence_info in tqdm(dataset[setname])]
+                    dataset[setname] = [(self.TurnWordID(con), self.TurnWordID(q), self.TurnWordID(optionABCD[ans]), sentence_info, optionABCD[ans], [self.TurnWordID(c) for c in optionABCD], ans, core_sen_id) for con, q ,optionABCD, sentence_info, ans, core_sen_id in tqdm(dataset[setname])]
             # Saving
             print('Saving dataset...')
             self.saveDataset(self.data_dump_path, dataset)

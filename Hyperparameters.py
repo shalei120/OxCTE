@@ -24,7 +24,7 @@ class HP:
         args['embeddingSize'] = 300 #300
         # args['embeddingSource'] = "GoogleNews-vectors-negative300.bin"
 
-        args['numEpochs'] = 50
+        args['numEpochs'] = 200
         args['saveEvery'] = 2000
         args['batchSize'] = 16
         args['learningRate'] = 0.001

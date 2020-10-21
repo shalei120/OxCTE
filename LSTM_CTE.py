@@ -5,16 +5,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.parameter import Parameter
-from RandomMatrix import  GaussianOrthogonalRandomMatrix
+from RandomMatrix import GaussianOrthogonalRandomMatrix
 from FastSelfAttention import dot_product_attention
 import numpy as np
 
 import datetime
 
-
 from Encoder import Encoder
 from Decoder import Decoder
 from Hyperparameters import args
+
 
 class LSTM_CTE_Model(nn.Module):
     """
@@ -37,45 +37,45 @@ class LSTM_CTE_Model(nn.Module):
         self.index2word = i2w
         self.max_length = args['maxLengthDeco']
 
-        self.NLLloss = torch.nn.NLLLoss(reduction = 'none')
-        self.CEloss =  torch.nn.CrossEntropyLoss(reduction = 'none')
+        self.NLLloss = torch.nn.NLLLoss(reduction='none')
+        self.CEloss = torch.nn.CrossEntropyLoss(reduction='none')
 
         self.embedding = nn.Embedding.from_pretrained(embs)
 
         self.encoder = Encoder(w2i, i2w)
-        self.encoder2 = Encoder(w2i, i2w,inputsize = args['hiddenSize'])
+        self.encoder2 = Encoder(w2i, i2w, inputsize=args['hiddenSize'])
 
         self.decoder = Decoder(w2i, i2w, self.embedding)
         self.tanh = nn.Tanh()
         self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim = -1)
+        self.softmax = nn.Softmax(dim=-1)
 
         self.att_size_r = 60
         self.grm = GaussianOrthogonalRandomMatrix()
         self.att_projection_matrix = Parameter(self.grm.get_2d_array(args['hiddenSize'], self.att_size_r))
-        self.M = Parameter(torch.randn([args['hiddenSize'],args['embeddingSize']]))
+        self.M = Parameter(torch.randn([args['hiddenSize'], args['embeddingSize']]))
 
         # self.z_to_fea = nn.Linear(args['hiddenSize'], args['hiddenSize']).to(args['device'])
         self.SentenceClassifier = nn.Sequential(
             nn.Linear(args['hiddenSize'], 1),
             nn.Sigmoid()
-          )
-        
-    def sample_z(self, mu, log_var,batch_size):
-        eps = Variable(torch.randn(batch_size, args['style_len']*2* args['numLayers'])).to(args['device'])
-        return mu + torch.einsum('ba,ba->ba', torch.exp(log_var/2),eps)
+        )
 
-    def cos(self, x1,x2):
+    def sample_z(self, mu, log_var, batch_size):
+        eps = Variable(torch.randn(batch_size, args['style_len'] * 2 * args['numLayers'])).to(args['device'])
+        return mu + torch.einsum('ba,ba->ba', torch.exp(log_var / 2), eps)
+
+    def cos(self, x1, x2):
         '''
         :param x1: batch seq emb
         :param x2:
         :return:
         '''
-        xx = torch.einsum('bse,bte->bst', x1,x2)
-        x1n = torch.norm(x1, dim = -1, keepdim=True)
-        x2n = torch.norm(x2, dim = -1, keepdim=True)
-        xd = torch.einsum('bse,bte->bst', x1n,x2n).clamp(min = 0.0001)
-        return xx/xd
+        xx = torch.einsum('bse,bte->bst', x1, x2)
+        x1n = torch.norm(x1, dim=-1, keepdim=True)
+        x2n = torch.norm(x2, dim=-1, keepdim=True)
+        xd = torch.einsum('bse,bte->bst', x1n, x2n).clamp(min=0.0001)
+        return xx / xd
 
     def sample_gumbel(self, shape, eps=1e-20):
         U = torch.rand(shape).to(args['device'])
@@ -114,20 +114,29 @@ class LSTM_CTE_Model(nn.Module):
         answer_dec = torch.LongTensor(x.decoderSeqs).to(args['device'])
         answer_tar = torch.LongTensor(x.targetSeqs).to(args['device'])
         context_mask = torch.FloatTensor(x.context_mask).to(args['device'])  # batch sentence
-        sentence_mask = torch.FloatTensor(x.sentence_mask).to(args['device']) # batch sennum contextlen
+        sentence_mask = torch.FloatTensor(x.sentence_mask).to(args['device'])  # batch sennum contextlen
 
+        opt_inputs = []
+        for i in range(4):
+            opt_inputs.append(x.optionSeqs[i])
+        answerlabel = torch.LongTensor(x.label).to(args['device'])
 
         batch_size = context_inputs.size()[0]
         context_inputs_embs = self.embedding(context_inputs)
         q_inputs_embs = self.embedding(q_inputs)
 
-        en_context_output, (en_context_hidden, en_context_cell) = self.encoder(context_inputs_embs) # b s e
+        en_context_output, (en_context_hidden, en_context_cell) = self.encoder(context_inputs_embs)  # b s e
         en_q_output, (en_q_hidden, en_q_cell) = self.encoder(q_inputs_embs)
 
         # en_context_output_flat = en_context_output.transpose(0,1).reshape(batch_size,-1)
         # en_q_output_flat = en_q_output.transpose(0,1).reshape(batch_size,-1)
 
-        attentioned_context = dot_product_attention(query=en_context_output, key=en_q_output, value=en_q_output, projection_matrix = self.att_projection_matrix) # b s h
+        c_q = torch.cat([en_context_output, en_q_output], dim=1)
+
+        attentioned_context = dot_product_attention(query=c_q, key=c_q, value=c_q,
+                                                    projection_matrix=self.att_projection_matrix)  # b s h
+
+        c_after_att, q_after_att = attentioned_context.split([en_context_output.shape[1], en_q_output.shape[1]], dim=1)
         # print(attentioned_context)
         # exit()
 
@@ -165,12 +174,15 @@ class LSTM_CTE_Model(nn.Module):
         # q_info_cat_info_con = torch.cat([q_info_cat_info, context_inputs_embs], dim = 2) # b q e
         # # print(q_info_cat_info.size())
         # out_info, _ = self.encoder2(q_info_cat_info_con) # b c e
-        out_info, _ = self.encoder2(attentioned_context) # b c e
+        out_info, _ = self.encoder2(c_after_att)  # b c e
 
-        sentence_embs = torch.einsum('bce,bsc->bse', out_info, sentence_mask) / (sentence_mask.sum(2, keepdim=True)+eps)
+        sentence_embs = torch.einsum('bce,bsc->bse', out_info, sentence_mask) / (
+                    sentence_mask.sum(2, keepdim=True) + eps)
         # print(sentence_embs)
-        sentence_probs = self.SentenceClassifier(sentence_embs * context_mask.unsqueeze(2)) # batch sentence
-        sentence_sample, _ = self.gumbel_softmax(sentence_probs)
+        raw_sentence_logits = self.SentenceClassifier(sentence_embs ).squeeze()
+        # print(raw_sentence_logits.size(), context_mask.size())
+        sentence_logits = raw_sentence_logits * context_mask + (1-context_mask) * (-1e30)  # batch sentence
+        sentence_sample, _ = self.gumbel_softmax(sentence_logits)
         # print(sentence_embs.size(), sentence_sample.size())
         decoder_input = torch.einsum('bse,bs->be', sentence_embs, sentence_sample.squeeze())
         en_state = self.decoder.vector2state(decoder_input)
@@ -182,15 +194,36 @@ class LSTM_CTE_Model(nn.Module):
         recon_loss = torch.squeeze(recon_loss) * mask
 
         recon_loss_mean = torch.mean(recon_loss)
-        # print(recon_loss_mean)
-        # exit()
-        return recon_loss_mean, en_state
 
-    def forward(self, x ):
-        loss, _= self.build(x)
+        opt_vec = []
+        # opt_input_embed =[]
+        for i in range(4):
+            # opt_input_embed.append(self.embedding(opt_inputs[i]))
+            opt1 = []
+            for j in range(batch_size):
+                embs = self.embedding(torch.LongTensor(opt_inputs[i][j]).to(args['device']))
+                # print(embs.size())
+                opt1.append(torch.mean(embs, dim=0))
+            # print(torch.stack(opt1).size())
+            # exit()
+            opt_vec.append(torch.stack(opt1))  # batch dim
+        #
+        opt_vec_stack = torch.stack(opt_vec)  # 4 batch dim
+
+
+        mul1 = torch.einsum('be,er->br', decoder_input, self.M)
+        scores = torch.einsum('obe,be->bo', opt_vec_stack, mul1)
+        recon_loss_c = self.CEloss(scores, answerlabel)
+
+
+        loss = recon_loss_mean + recon_loss_c.mean()
+        return loss, en_state, scores, sentence_logits
+
+    def forward(self, x):
+        loss, _ , _, _= self.build(x)
         return loss
 
     def predict(self, x):
-        loss, en_state = self.build(x)
+        loss, en_state, output, sentence_probs = self.build(x)
         de_words = self.decoder.generate(en_state)
-        return loss, de_words
+        return loss, de_words, torch.argmax(output, dim = -1), torch.argmax(sentence_probs, dim = -1)
