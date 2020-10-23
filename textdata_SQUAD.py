@@ -5,7 +5,7 @@ import nltk  # For tokenize
 from tqdm import tqdm  # Progress bar
 import pickle  # Saving the data
 import math  # For float comparison
-import os  # Checking file existance
+import os , re # Checking file existance
 import random
 import string, copy
 from nltk.tokenize import word_tokenize
@@ -24,11 +24,27 @@ class Batch:
     def __init__(self):
         self.encoderSeqs = []
         self.encoder_lens = []
-        self.label = []
+        self.starts= []
+        self.ends= []
         self.decoderSeqs = []
         self.targetSeqs = []
         self.decoder_lens = []
 
+        self.contextSeqs = []
+        self.context_lens = []
+        self.questionSeqs = []
+        self.question_lens = []
+        self.answerSeqs = []
+        self.ans_lens = []
+        self.context_mask = []
+        self.sentence_mask = []
+        self.starts = []
+        self.ends = []
+
+
+        self.raw_ans = []
+        self.core_sen_ids = []
+        self.all_answers = []
 
 class TextData:
     """Dataset class
@@ -36,7 +52,7 @@ class TextData:
     """
 
 
-    def __init__(self, corpusname):
+    def __init__(self, corpusname, modeltype):
         """Load all conversations
         Args:
             args: parameters of the model
@@ -51,9 +67,10 @@ class TextData:
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
 
-        if corpusname == 'squad':
-            # self.datasets = self.loadCorpus_SQUAD()
-            self.datasets = self.load_squad()
+        if modeltype == 'lstm':
+            self.datasets = self.loadCorpus_SQUAD()
+        elif modeltype == 'bert':
+            self.datasets = self.load_squad_for_bert()
 
 
         print('set')
@@ -89,33 +106,54 @@ class TextData:
         batch = Batch()
         batchSize = len(samples)
 
+        sentence_num_max = 0
         # Create the batch tensor
         for i in range(batchSize):
             # Unpack the sample
-            sen_ids, charge_list, law, toi, raw_sentence = samples[i]
+            context_tokens, q_tokens, option, word_start, word_end, option_raw, sentence_info, all_answer_text = samples[i]
 
-            if len(sen_ids) > args['maxLengthEnco']:
-                sen_ids = sen_ids[:args['maxLengthEnco']]
+            if len(context_tokens) > args['maxLengthEnco']:
+                context_tokens = context_tokens[:args['maxLengthEnco']]
 
-            batch.encoderSeqs.append(sen_ids)
-            batch.encoder_lens.append(len(batch.encoderSeqs[i]))
-            if args['task'] == 'charge':
-                batch.label.append(charge_list)
-            elif args['task'] == 'law':
-                batch.label.append(law)
-            elif args['task'] == 'toi':
-                batch.label.append(toi)
+            batch.contextSeqs.append(context_tokens)
+            batch.context_lens.append(len(batch.contextSeqs[i]))
+            batch.questionSeqs.append(q_tokens)
+            batch.question_lens.append(len(batch.questionSeqs[i]))
+            batch.answerSeqs.append(option)
+            batch.ans_lens.append(len(option))
+            batch.raw_ans.append(option_raw)
+            sentence_num_max = max(sentence_num_max, len(sentence_info))
+            batch.starts.append(word_start)
+            batch.ends.append(word_end)
+            batch.all_answers.append(all_answer_text)
+            # batch.core_sen_ids.append(core_sen_id)
 
-        maxlen_enc = max(batch.encoder_lens)
-        if args['task'] in ['charge', 'law']:
-            maxlen_charge = max([len(c) for c in batch.label]) + 1
-        # args['chargenum']      eos
+        maxlen_con = max(batch.context_lens)
+        maxlen_q = max(batch.question_lens)
+        maxlen_opt = max(batch.ans_lens)
         # args['chargenum'] + 1  padding
 
         for i in range(batchSize):
-            batch.encoderSeqs[i] = batch.encoderSeqs[i] + [self.word2index['PAD']] * (maxlen_enc - len(batch.encoderSeqs[i]))
-            if args['task'] in ['charge', 'law']:
-                batch.label[i] = batch.label[i] + [args['chargenum']] + [args['chargenum']+1] * (maxlen_charge -1 - len(batch.label[i]))
+            sentence_info = samples[i][6]
+            batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_con - len(batch.contextSeqs[i]))
+            batch.questionSeqs[i] = batch.questionSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_q - len(batch.questionSeqs[i]))
+
+            batch.decoderSeqs.append([self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_opt - len(batch.answerSeqs[i])))
+            batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                        maxlen_opt - len(batch.answerSeqs[i])))
+            batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_opt - len(batch.answerSeqs[i]))
+            batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
+            start = 0
+            end = 0
+            for ind, sen_l in enumerate(sentence_info):
+                end += sen_l
+                batch.sentence_mask[i][ind, start:end] = 1
+                start = end
+                batch.context_mask[i, :sen_l] = 1
 
         return batch
 
@@ -185,7 +223,12 @@ class TextData:
 
         ends.append(len(context))
 
-        return [(s, start, end) for s, start, end in zip(sens, starts, ends)]
+        sentence_lens = []
+        for sen in sens:
+            sen_token = self.tokenizer(sen)
+            sentence_lens.append(len(sen_token))
+
+        return [(s, start, end) for s, start, end in zip(sens, starts, ends)], sentence_lens
 
     def selectRelAnsSentences(self, con_sentences, answer_start2text):
         rel_sens = []
@@ -203,27 +246,50 @@ class TextData:
 
         return rel_sens, ans_sens
 
+    def get_word_se(self, char_start, ans, context_tokens):
+        cur_len = 0
+        word_start = -1
+        word_end = -1
+        exclude = set(string.punctuation)
+        if ans[-1] == '.':
+            ans = ans[:-1]
+        phrase_len = len(ans)
 
+        min_diff = 100000
+        for index, token in enumerate(context_tokens):
 
-    def loadCorpus_SQUAD(self):
+            if context_tokens[index : index + phrase_len] == ans:
+                if min_diff > np.abs(cur_len-char_start):
+                    min_diff = np.abs(cur_len-char_start)
+                    word_start = index
+                    word_end = index + phrase_len
+
+            cur_len += len(token) + 1- (token in exclude)
+        if word_start == -1:
+            print('fuck word start')
+        return word_start, word_end
+
+    def loadCorpus_SQUAD(self, glove = True, vec_dim = 300):
         """Load/create the conversations data
         """
         if args['datasetsize'] == '1.1':
-            self.basedir = '../SQUAD/'
+            self.basedir = '../MR/SQUAD/'
             self.corpus_file_train = self.basedir + 'train-v1.1.json'
             self.corpus_file_dev =  self.basedir + 'dev-v1.1.json'
             self.data_dump_path = args['rootDir'] + '/SQUAD_1.pkl'
             self.vocfile = args['rootDir'] + '/voc_squad_1.txt'
         elif args['datasetsize'] == '2.0':
-            self.basedir = '../SQUAD/'
+            self.basedir = '../MR/SQUAD/'
             self.corpus_file_train = self.basedir + 'train-v2.0.json'
             self.corpus_file_test =  self.basedir + 'dev-v2.0.json'
             self.data_dump_path = args['rootDir'] + '/SQUAD_2.pkl'
             self.vocfile = args['rootDir'] + '/voc_squad_2.txt'
 
+        if glove:
+            self.vocfile = args['rootDir'] + '/glove.6B.'+str(vec_dim)+'d.txt'
         print(self.data_dump_path)
         datasetExist = os.path.isfile(self.data_dump_path)
-        wikiSimFileName = args['rootDir']+'wikiSim_squad_'+args['datasetsize'] +'.txt'
+        # wikiSimFileName = args['rootDir']+'wikiSim_squad_'+args['datasetsize'] +'.txt'
 
         if not datasetExist:  # First time we load the database: creating all files
             print('Training data not found. Creating dataset...')
@@ -232,9 +298,9 @@ class TextData:
             dataset = {'train': [], 'dev':[], 'test':[]}
 
             # wiki_similar = os.path.exists(wikiSimFileName)
-            wiki_similar = False
-            if not wiki_similar:
-                wiki_sim_file = open(wikiSimFileName, 'w')
+            # wiki_similar = False
+            # if not wiki_similar:
+            #     wiki_sim_file = open(wikiSimFileName, 'w')
 
             def read_data_from_file(filename):
                 datalist = []
@@ -247,18 +313,26 @@ class TextData:
                     for doc in tqdm(passages_json['data']):
                         for para in doc['paragraphs']:
                             context = para['context']
-                            context_tokens = word_tokenize(context)
-                            con_sentences = self.CutContext(context) # [(sen, (start,end)),...]
+                            context = re.sub('([0-9]{4}).','\g<1> . ', context)
+
+                            context_tokens = word_tokenize(context.lower().replace('-', ' - ')
+                                                           .replace('–', ' - '))
+                            con_sentences, sen_lens_inword = self.CutContext(context.lower().replace('-', ' - ')
+                                                                             .replace('–', ' - ')) # [(sen, (start,end)),...]
                             qas = para['qas']
                             for qa in qas:
                                 question = qa['question']
-                                question = word_tokenize(question)
+                                question = re.sub('([0-9]{4}).','\g<1> . ', question)
+                                question = word_tokenize(question.lower().replace('-', ' - ').replace('–', ' - '))
                                 answer_list = qa['answers']
-                                al = {}
+                                all_answer_starts = []
+                                all_answer_text = []
                                 for answer in answer_list:
                                     answer_start = answer['answer_start']
-                                    answer_text = answer['text']
-                                    al[answer_start] = answer_text
+                                    answer['text'] = re.sub('([0-9]{4}).','\g<1> . ', answer['text'])
+                                    answer_text = word_tokenize(answer['text'].lower().replace('-', ' - ').replace('–', ' - '))
+                                    all_answer_text.append(answer_text)
+                                    all_answer_starts.append(answer_start)
 
                                 # if not wiki_similar:
                                 #     for s, t in al.items():
@@ -271,7 +345,9 @@ class TextData:
                                 #     AnsSen = self.GetReferenceSentences(AnsSen)
                                 #     datalist.append([context_tokens, question, al, RepEnt, RelSen, AnsSen])
 
-                                datalist.append(context_tokens, question, )
+                                word_start, word_end = self.get_word_se(all_answer_starts[0], all_answer_text[0], context_tokens)
+
+                                datalist.append([context_tokens, question, all_answer_text[0], word_start, word_end, sen_lens_inword, all_answer_text])
                 return datalist
 
             dataset['train'] = read_data_from_file(self.corpus_file_train)
@@ -283,47 +359,49 @@ class TextData:
 
             print(len(dataset['train']), len(dataset['dev']))
 
+            if not glove:
+                fdist = nltk.FreqDist(total_words)
+                sort_count = fdist.most_common(30000)
+                print('sort_count: ', len(sort_count))
 
-            fdist = nltk.FreqDist(total_words)
-            sort_count = fdist.most_common(30000)
-            print('sort_count: ', len(sort_count))
+                # nnn=8
+                with open(self.vocfile, "w") as v:
+                    for w, c in tqdm(sort_count):
+                        # if nnn > 0:
+                        #     print([(ord(w1),w1) for w1 in w])
+                        #     nnn-= 1
+                        if w not in [' ', '', '\n', '\r', '\r\n']:
+                            v.write(w)
+                            v.write(' ')
+                            v.write(str(c))
+                            v.write('\n')
 
-            # nnn=8
-            with open(self.vocfile, "w") as v:
-                for w, c in tqdm(sort_count):
-                    # if nnn > 0:
-                    #     print([(ord(w1),w1) for w1 in w])
-                    #     nnn-= 1
-                    if w not in [' ', '', '\n', '\r', '\r\n']:
-                        v.write(w)
-                        v.write(' ')
-                        v.write(str(c))
-                        v.write('\n')
+                    v.close()
 
-                v.close()
+            if glove:
+                self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
+                    self.vocfile)
+            else:
+                self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile,
+                                                                                         vectordim=vec_dim)
 
-            self.word2index = self.read_word2vec(self.vocfile)
-            sorted_word_index = sorted(self.word2index.items(), key=lambda item: item[1])
-            print('sorted')
-            self.index2word = [w for w, n in sorted_word_index]
-            print('index2word')
             self.index2word_set = set(self.index2word)
 
             # self.raw_sentences = copy.deepcopy(dataset)
             for setname in ['train', 'test']:
-                dataset[setname] = [(self.TurnWordID(sen), [law_related_info['c2i'][c] for c in charge], [law_related_info['law2i'][c] for c in law],toi, sen) for sen, charge,law, toi in tqdm(dataset[setname])]
+                dataset[setname] = [(self.TurnWordID(context_tokens), self.TurnWordID(question), self.TurnWordID(ans), word_start, word_end, ans, senlen_inword, all_answer_text) for context_tokens, question, ans, word_start, word_end, senlen_inword, all_answer_text in tqdm(dataset[setname])]
             # Saving
             print('Saving dataset...')
-            self.saveDataset(self.data_dump_path, dataset, law_related_info)  # Saving tf samples
+            self.saveDataset(self.data_dump_path, dataset)  # Saving tf samples
         else:
-            dataset, law_related_info = self.loadDataset(self.data_dump_path)
+            dataset = self.loadDataset(self.data_dump_path)
             print('train size:\t', len(dataset['train']))
             print('test size:\t', len(dataset['test']))
             print('loaded')
 
-        return  dataset, law_related_info
+        return  dataset
 
-    def load_squad(self):
+    def load_squad_for_bert(self):
         if args['datasetsize'] == '1.1':
             self.basedir = '../MR/SQUAD/'
             self.corpus_file_train = self.basedir + 'train-v1.1.json'
@@ -437,6 +515,38 @@ class TextData:
         # dic = {w:numpy.random.normal(size=[int(sys.argv[1])]).astype('float32') for w in word2index}
         print ('Dictionary Got!')
         return word2index
+
+    def read_word2vec_from_pretrained(self, embfile, topk_word_num=30000):
+        word2index = dict()
+        word2index['PAD'] = 0
+        word2index['START_TOKEN'] = 1
+        word2index['END_TOKEN'] = 2
+        word2index['UNK'] = 3
+        word2index['SOC'] = 4
+        cnt = 5
+        pre_cnts = cnt
+        vectordim = -1
+        index2vector = []
+        with open(embfile, "r") as v:
+            lines = v.readlines()
+            lines = lines[:topk_word_num]
+            for line in tqdm(lines):
+                word_vec = line.strip().split()
+                word = word_vec[0]
+                vector = np.asarray([float(value) for value in word_vec[1:]])
+                if vectordim == -1:
+                    vectordim = len(vector)
+                index2vector.append(vector)
+                word2index[word] = cnt
+                print(word, cnt)
+                cnt += 1
+
+        index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(pre_cnts)] + index2vector
+        index2vector = np.asarray(index2vector)
+        index2word = [w for w, n in word2index.items()]
+        print(len(word2index), cnt)
+        print('Dictionary Got!')
+        return word2index, index2word, index2vector
 
     def TurnWordID(self, words):
         res = []
