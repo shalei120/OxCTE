@@ -433,37 +433,7 @@ class TextData:
         print ('Dictionary Got!')
         return word2index, index2word, index2vector
 
-    def read_word2vec_from_pretrained(self, embfile, topk_word_num=30000):
-        word2index = dict()
-        word2index['PAD'] = 0
-        word2index['START_TOKEN'] = 1
-        word2index['END_TOKEN'] = 2
-        word2index['UNK'] = 3
-        word2index['SOC'] = 4
-        cnt = 5
-        pre_cnts = cnt
-        vectordim = -1
-        index2vector = []
-        with open(embfile, "r") as v:
-            lines = v.readlines()
-            lines = lines[:topk_word_num]
-            for line in tqdm(lines):
-                word_vec = line.strip().split()
-                word = word_vec[0]
-                vector = np.asarray([float(value) for value in word_vec[1:]])
-                if vectordim == -1:
-                    vectordim = len(vector)
-                index2vector.append(vector)
-                word2index[word] = cnt
-                print(word, cnt)
-                cnt += 1
 
-        index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(pre_cnts)] + index2vector
-        index2vector = np.asarray(index2vector)
-        index2word = [w for w, n in word2index.items()]
-        print(len(word2index), cnt)
-        print('Dictionary Got!')
-        return word2index, index2word, index2vector
 
     def TurnWordID(self, words):
         res = []
