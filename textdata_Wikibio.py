@@ -23,11 +23,15 @@ class Batch:
     def __init__(self):
         self.encoderSeqs = []
         self.encoder_lens = []
-        self.starts= []
-        self.ends= []
+        # self.starts= []
+        # self.ends= []
         self.decoderSeqs = []
         self.targetSeqs = []
         self.decoder_lens = []
+
+
+        self.ContextDecoderSeqs = []
+        self.ContextTargetSeqs = []
 
         self.contextSeqs = []
         self.context_lens = []
@@ -65,7 +69,8 @@ class TextData:
 
         self.title2num = {}
         self.datasets = self.loadCorpus_Wikibio()
-
+        # print(len(self.datasets['train']))
+        # print(self.datasets['train'][-1])
         print('set')
         # Plot some stats:
         # self._printStats(corpusname)
@@ -133,6 +138,10 @@ class TextData:
         for i in range(batchSize):
             context_sens = samples[i][3]
             context_sen_num = samples[i][4]
+            batch.ContextDecoderSeqs.append([self.word2index['START_TOKEN']] + batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_con - len(batch.contextSeqs[i])))
+            batch.ContextTargetSeqs.append(batch.contextSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                        maxlen_con - len(batch.contextSeqs[i])))
             batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_con - len(batch.contextSeqs[i]))
             batch.decoderSeqs.append([self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
@@ -194,6 +203,13 @@ class TextData:
         """
         return len(self.word2index)
 
+    def getTitleSize(self):
+        """Return the number of words present in the dataset
+        Return:
+            int: Number of word on the loader corpus
+        """
+        return len(self.title2index)
+
     def loadCorpus_Wikibio(self, glove = True, vec_dim = 300):
         """Load/create the conversations data
         """
@@ -216,6 +232,7 @@ class TextData:
 
             total_words = []
             dataset = {'train': [], 'dev': [], 'test': []}
+            self.words = []
 
             def deal_set_info(filename):
                 infoboxfile = open(filename + '.box', 'r')
@@ -250,22 +267,18 @@ class TextData:
                 if n >= 100:
                     sorted_title.append(t)
 
-            title2index = dict()
-            title2index['PAD'] = 0
-            title2index['START'] = 1
-            title2index['END'] = 2
-            title2index['UNK'] = 3
+            self.title2index = dict()
+            self.title2index['PAD'] = 0
+            self.title2index['START'] = 1
+            self.title2index['END'] = 2
+            self.title2index['UNK'] = 3
             for t in sorted_title:
-                title2index[t] = len(title2index)
+                self.title2index[t] = len(self.title2index)
 
 
-            if glove:
-                self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
-                    self.vocfile)
-            else:
-                self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile,
-                                                                                         vectordim=vec_dim)
-            self.index2word_set = set(self.index2word)
+
+
+
 
             def deal_set(setname, dealed_table_list):
                 sentencenumfile = open(setname + '.nb', 'r')
@@ -282,14 +295,14 @@ class TextData:
                     box = []
                     for index, item in enumerate(dealed_table):
                         resitem = []
-                        resitem.append(title2index['UNK'] if item[0] not in title2index else title2index[item[0]])
+                        resitem.append(self.title2index['UNK'] if item[0] not in self.title2index else self.title2index[item[0]])
                         content_words = item[1].split()
                         if len(content_words) > 15:
                             inum += 1
                         total += 1
-                        content_word_ids = self.TurnWordID(content_words)
+                        # content_word_ids = self.TurnWordID(content_words)
 
-                        resitem.append(content_word_ids)
+                        resitem.append(content_words)
                         box.append(resitem)
                     # print box
                     boxes.append(box)
@@ -310,6 +323,33 @@ class TextData:
 
                 print(len(dealed_table_list), len(sentnbs))
 
+                if not glove:
+                    fdist = nltk.FreqDist(self.words)
+                    sort_count = fdist.most_common(30000)
+                    print('sort_count: ', len(sort_count))
+
+                    # nnn=8
+                    with open(self.vocfile, "w") as v:
+                        for w, c in tqdm(sort_count):
+                            # if nnn > 0:
+                            #     print([(ord(w1),w1) for w1 in w])
+                            #     nnn-= 1
+                            if w not in [' ', '', '\n', '\r', '\r\n']:
+                                v.write(w)
+                                v.write(' ')
+                                v.write(str(c))
+                                v.write('\n')
+
+                        v.close()
+
+                if glove:
+                    self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
+                        self.vocfile)
+                else:
+                    self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile,
+                                                                                             vectordim=vec_dim)
+                self.index2word_set = set(self.index2word)
+
                 for nb in sentnbs:
                     # count += 1
                     # if count % 1000 == 0:
@@ -321,9 +361,10 @@ class TextData:
 
                     for i in range(nb):
                         sent = sentencefile.readline()
-                        words = sent.split()
-                        sentids = self.TurnWordID(words)
-                        sentences.append(sentids)
+                        words = sent.lower().split()
+                        self.words.extend(words)
+                        # sentids = self.TurnWordID(words)
+                        sentences.append(words)
                         # print sent
 
                     passages.append(sentences)
@@ -333,9 +374,9 @@ class TextData:
 
                 def gene_case(box, p):
                     titles = [item[0] for item in box]  # []
-                    contents = [item[1] for item in box]  # [[] [] []]
+                    contents = [self.TurnWordID(item[1]) for item in box]  # [[] [] []]
                     contents_len = [len(item[1]) for item in box]  # [[] [] []]
-                    target = p # [[] [] []...]
+                    target = [self.TurnWordID(sen) for sen in p] # [[] [] []...]
                     target_len = len(p)
                     # if target_len > 100:
                     #     target_len = 100
@@ -345,7 +386,7 @@ class TextData:
                     # target_len += 1
                     res = []
                     for field, content, content_len in zip(titles, contents, contents_len):
-                        if field == title2index['UNK'] or content_len > 10:
+                        if field == self.title2index['UNK'] or content_len > 10:
                             continue
 
                         res.append((field, content, content_len, target, target_len))
@@ -395,6 +436,7 @@ class TextData:
                 'word2index': self.word2index,
                 'index2word': self.index2word,
                 'index2vec' : self.index2vector,
+                'title2index': self.title2index,
                 'datasets': datasets
             }
             pickle.dump(data, handle, -1)  # Using the highest protocol available
@@ -412,6 +454,7 @@ class TextData:
                 self.word2index = data['word2index']
                 self.index2word = data['index2word']
                 self.index2vector = data['index2vec']
+                self.title2index = data['title2index']
                 self.index2word_set = set(self.index2word)
             datasets = data['datasets']
 
@@ -419,22 +462,19 @@ class TextData:
 
     def transform_infobox(self, info):
         items = info.split('\t')
-        try:
-            items = [(t.split(':')[0], t.split(':')[1]) for t in items]
-        except:
-            fg=0
+        items = [(t.split(':')[0], t.split(':')[1]) for t in items]
 
         dealed_items = []
         for item in items:
             if item[0].split('_')[-1].isdigit():
                 num = int(item[0].split('_')[-1])
+                self.words.append(item[1])
                 if num == 1:
                     title = '_'.join(item[0].split('_')[:-1])
                     if title in self.title2num:
                         self.title2num[title] += 1
                     else:
                         self.title2num[title] = 1
-
 
                     ditem = [title , item[1]]
                     dealed_items.append(ditem)
@@ -448,6 +488,7 @@ class TextData:
                     self.title2num[title] = 1
 
                 if item[1] != '<none>':
+                    self.words.append(item[1])
                     dealed_items.append(item)
 
         def legal(str):
