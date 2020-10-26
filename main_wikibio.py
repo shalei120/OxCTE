@@ -5,9 +5,7 @@ print = functools.partial(print, flush=True)
 import argparse
 import os
 
-from textdata_MCTEST import TextData as td_mc
-from textdata_RACE import TextData as td_race
-from textdata_RACE_CTE import TextData as td_race_cte
+from textdata_Wikibio import TextData as td_wiki
 import time, sys
 import torch
 import torch.autograd as autograd
@@ -25,7 +23,7 @@ import numpy as np
 import copy
 from Hyperparameters import args
 from LSTM import LSTM_Model
-from LSTM_CTE import LSTM_CTE_Model
+from LSTM_CTE_Wikibio import LSTM_CTE_Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
@@ -72,12 +70,13 @@ class Runner:
     def main(self):
         args['datasetsize'] = -1
 
-        self.textData = td_race_cte(model_type='lstm')
+        self.textData = td_wiki()
         args['batchSize'] = 256
         # args['model_arch'] = 'lstm_cte'
         self.start_token = self.textData.word2index['START_TOKEN']
         self.end_token = self.textData.word2index['END_TOKEN']
         args['vocabularySize'] = self.textData.getVocabularySize()
+        args['TitleNum'] = self.textData.getTitleSize()
 
         print(self.textData.getVocabularySize())
         if args['model_arch'] == 'lstm':
@@ -86,8 +85,8 @@ class Runner:
             self.model = self.model.to(args['device'])
             self.train()
         elif args['model_arch'] == 'lstm_cte':
-            print('Using LSTM multi sentence selection model.')
-            self.model = LSTM_CTE_Model(self.textData.word2index, self.textData.index2word, torch.FloatTensor(self.textData.index2vector))
+            print('Using LSTM control text editing model.')
+            self.model = LSTM_CTE_Model(self.textData.word2index, self.textData.index2word)
             self.model = self.model.to(args['device'])
             self.train()
 
@@ -117,8 +116,7 @@ class Runner:
             #               Training
             # =======================================
             # Print the header of the result table
-            print(
-                f"{'Epoch':^7} | {'Batch':^7} | {'Train Loss':^12} | {'Val Loss':^10} | {'Val Acc':^9} | {'Elapsed':^9} | {timeSince(start, iter / n_iters)}")
+            print(f"{'Epoch':^7} | {'Batch':^7} | {'Train Loss':^12} | {'Val Loss':^10} | {'Val Acc':^9} | {'Elapsed':^9} | {timeSince(start, iter / n_iters)}")
             print("-" * 70)
 
             # Measure the elapsed time of each epoch
@@ -193,37 +191,38 @@ class Runner:
         total = 0
         val_loss = []
         pred_ans = []  # cnn
+        pred_context = []  # cnn
         gold_ans = []
+        gold_context = []
         # val_accuracy = []/
         # For each batch in our validation set...
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                loss ,decoded_words, preds, pred_sens = model.predict(batch)
-                pred_ans.extend(decoded_words)
+                loss, de_words_answer, de_words_context = model.predict(batch)
+                pred_ans.extend(de_words_answer)
+                pred_context.extend(de_words_context)
 
             gold_ans.extend([[r] for r in batch.raw_ans])
+            gold_context.extend([[r] for r in batch.raw_context])
             # print(preds, batch.label)
 
             # Calculate the accuracy rate
             # accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
             # val_accuracy.append(accuracy)
 
-            right += sum((preds.cpu() == torch.LongTensor(batch.label)).numpy())
-            right_sens += sum((pred_sens.cpu() == torch.LongTensor(batch.core_sen_ids)).numpy())
-            total += len(batch.label)
+
             val_loss.append(loss.item())
 
-        for i in range(10):
-            print(gold_ans[i][0], pred_ans[i])
+        # for i in range(10):
+        #     print(gold_ans[i][0], pred_ans[i])
 
         bleu = self.get_corpus_BLEU(gold_ans, pred_ans)
+        bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
-        val_accuracy = right / total
-        sen_acc = right_sens / total
 
-        return bleu, val_loss, val_accuracy, sen_acc
+        return bleu, bleu_con, val_loss
 
     def get_sentence_BLEU(self, actual_word_lists, generated_word_lists):
         bleu_scores = self.get_corpus_bleu_scores([actual_word_lists], [generated_word_lists])

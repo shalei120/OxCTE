@@ -13,7 +13,7 @@ from queue import PriorityQueue
 import copy
 
 class Decoder(nn.Module):
-    def __init__(self,w2i, i2w, embedding):
+    def __init__(self,w2i, i2w, embedding, input_dim = args['embeddingSize'], hidden_dim = args['hiddenSize']):
         """
         Args:
             args: parameters of the model
@@ -31,12 +31,12 @@ class Decoder(nn.Module):
         self.embedding = embedding
 
         if args['decunit'] == 'lstm':
-            self.dec_unit = nn.LSTM(input_size=args['embeddingSize'],# +  args['numLayers'] *(args['content_len'] + args['style_len']),
-                                    hidden_size=args['hiddenSize'],
+            self.dec_unit = nn.LSTM(input_size=input_dim,
+                                    hidden_size=hidden_dim,
                                     num_layers=args['dec_numlayer'])
         elif args['decunit'] == 'gru':
-            self.dec_unit = nn.GRU(input_size=args['embeddingSize'] +  args['numLayers'] *(args['content_len'] + args['style_len']),
-                                   hidden_size=args['hiddenSize'],
+            self.dec_unit = nn.GRU(input_size=input_dim,
+                                   hidden_size=hidden_dim,
                                    num_layers=args['dec_numlayer'])
 
         self.out_unit = nn.Linear(args['hiddenSize'], args['vocabularySize'])
