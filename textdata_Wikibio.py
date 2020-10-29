@@ -47,6 +47,7 @@ class Batch:
 
 
         self.raw_ans = []
+        self.raw_context = []
         self.core_sen_ids = []
         self.all_answers = []
 
@@ -56,7 +57,7 @@ class TextData:
     """
 
 
-    def __init__(self):
+    def __init__(self, glove = True):
         """Load all conversations
         Args:
             args: parameters of the model
@@ -68,15 +69,16 @@ class TextData:
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
         self.title2num = {}
-        self.datasets = self.loadCorpus_Wikibio()
+        self.datasets = self.loadCorpus_Wikibio(glove=glove)
         # print(len(self.datasets['train']))
         # print(self.datasets['train'][-1])
+
         print('set')
         # Plot some stats:
         # self._printStats(corpusname)
         #
-        # if args['playDataset']:
-        #     self.playDataset()
+        if args['playDataset']:
+            self.playDataset()
 
         self.batches = {}
 
@@ -107,7 +109,7 @@ class TextData:
         # Create the batch tensor
         for i in range(batchSize):
             # Unpack the sample
-            title, slot, slot_len, context_sens, context_sen_num = samples[i] # context_tokens：   senlen * wordnum;  context_sen_num:
+            title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target = samples[i] # context_tokens：   senlen * wordnum;  context_sen_num:
             # context_tokens, q_tokens, option,  option_raw, sentence_info, all_answer_text = samples[i]
 
             context_tokens = []
@@ -123,7 +125,8 @@ class TextData:
             batch.field.append(title)
             batch.answerSeqs.append(slot)
             batch.ans_lens.append(slot_len)
-            batch.raw_ans.append(slot)
+            batch.raw_ans.append(raw_content)
+            batch.raw_context.append(raw_target)
             sentence_num_max = max(sentence_num_max, context_sen_num)
             # batch.starts.append(word_start)
             # batch.ends.append(word_end)
@@ -138,6 +141,7 @@ class TextData:
         for i in range(batchSize):
             context_sens = samples[i][3]
             context_sen_num = samples[i][4]
+            # print(context_sen_num, end=' ')
             batch.ContextDecoderSeqs.append([self.word2index['START_TOKEN']] + batch.contextSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_con - len(batch.contextSeqs[i])))
             batch.ContextTargetSeqs.append(batch.contextSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
@@ -150,15 +154,17 @@ class TextData:
                         maxlen_ans - len(batch.answerSeqs[i])))
             batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i]))
-            batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
-            start = 0
-            end = 0
-            for ind, sen in enumerate(context_sens):
-                sen_l = len(sen)
-                end += sen_l
-                batch.sentence_mask[i][ind, start:end] = 1
-                start = end
-            batch.context_mask[i, :context_sen_num] = 1
+            # batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
+            # batch.context_mask.append(np.zeros([sentence_num_max]))
+            # start = 0
+            # end = 0
+            # for ind, sen in enumerate(context_sens):
+            #     sen_l = len(sen)
+            #     end += sen_l
+            #     batch.sentence_mask[i][ind, start:end] = 1
+            #     start = end
+            # batch.context_mask[i][:context_sen_num] = 1
+        # print()
 
         return batch
 
@@ -185,6 +191,7 @@ class TextData:
                 batches.append(batch)
 
             self.batches[setname] = batches
+            print('batches ready!')
 
         # print([self.index2word[id] for id in batches[2].encoderSeqs[5]], batches[2].raws[5])
         return self.batches[setname]
@@ -294,6 +301,10 @@ class TextData:
                     #    print count,'completed'
                     box = []
                     for index, item in enumerate(dealed_table):
+                        field = item[0]
+                        field = field.replace('_','')
+                        if not self.CareFields(field):
+                            continue
                         resitem = []
                         resitem.append(self.title2index['UNK'] if item[0] not in self.title2index else self.title2index[item[0]])
                         content_words = item[1].split()
@@ -323,33 +334,6 @@ class TextData:
 
                 print(len(dealed_table_list), len(sentnbs))
 
-                if not glove:
-                    fdist = nltk.FreqDist(self.words)
-                    sort_count = fdist.most_common(30000)
-                    print('sort_count: ', len(sort_count))
-
-                    # nnn=8
-                    with open(self.vocfile, "w") as v:
-                        for w, c in tqdm(sort_count):
-                            # if nnn > 0:
-                            #     print([(ord(w1),w1) for w1 in w])
-                            #     nnn-= 1
-                            if w not in [' ', '', '\n', '\r', '\r\n']:
-                                v.write(w)
-                                v.write(' ')
-                                v.write(str(c))
-                                v.write('\n')
-
-                        v.close()
-
-                if glove:
-                    self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
-                        self.vocfile)
-                else:
-                    self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile,
-                                                                                             vectordim=vec_dim)
-                self.index2word_set = set(self.index2word)
-
                 for nb in sentnbs:
                     # count += 1
                     # if count % 1000 == 0:
@@ -360,7 +344,7 @@ class TextData:
                     sentences = []
 
                     for i in range(nb):
-                        sent = sentencefile.readline()
+                        sent = sentencefile.readline().strip()
                         words = sent.lower().split()
                         self.words.extend(words)
                         # sentids = self.TurnWordID(words)
@@ -370,11 +354,44 @@ class TextData:
                     passages.append(sentences)
 
 
+
+                if 'train' in setname:
+                    if not glove:
+                        fdist = nltk.FreqDist(self.words)
+                        sort_count = fdist.most_common(40000)
+                        print('sort_count: ', len(sort_count))
+
+                        # nnn=8
+                        with open(self.vocfile, "w") as v:
+                            for w, c in tqdm(sort_count):
+                                # if nnn > 0:
+                                #     print([(ord(w1),w1) for w1 in w])
+                                #     nnn-= 1
+                                if w not in [' ', '', '\n', '\r', '\r\n']:
+                                    v.write(w)
+                                    v.write(' ')
+                                    v.write(str(c))
+                                    v.write('\n')
+
+                            v.close()
+                        print('Self creating voc')
+
+                    if glove:
+                        self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
+                            self.vocfile)
+                    else:
+                        self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile, vectordim=args['embeddingSize'])
+                    self.index2word_set = set(self.index2word)
+
+
+
                 assert len(boxes) == len(passages)
 
                 def gene_case(box, p):
+                    unk_ind = self.word2index['UNK']
                     titles = [item[0] for item in box]  # []
                     contents = [self.TurnWordID(item[1]) for item in box]  # [[] [] []]
+                    raw_contents = [item[1] for item in box]
                     contents_len = [len(item[1]) for item in box]  # [[] [] []]
                     target = [self.TurnWordID(sen) for sen in p] # [[] [] []...]
                     target_len = len(p)
@@ -385,18 +402,27 @@ class TextData:
                     # target.append(word2index['END_TOKEN'])
                     # target_len += 1
                     res = []
-                    for field, content, content_len in zip(titles, contents, contents_len):
-                        if field == self.title2index['UNK'] or content_len > 10:
+                    for field, content, content_len, raw_content, raw_target in zip(titles, contents, contents_len, raw_contents, p):
+                        # field = field.replace('_','')
+                        if field == self.title2index['UNK'] or content_len > 10 or unk_ind in content:
+                            continue
+                        contain_values = True
+                        target_words = set(self.link(target))
+                        for w in content:
+                            if w not in target_words:
+                                contain_values = False
+                                break
+                        if not contain_values:
                             continue
 
-                        res.append((field, content, content_len, target, target_len))
+                        res.append((field, content, content_len, target, target_len, raw_content, raw_target))
 
                     return res
 
                 cases = []
                 for box, p in zip(boxes, passages):
                     cases.extend(gene_case(box, p))
-                sorted_cases = sorted(cases, key=lambda x: x[4])
+                sorted_cases = sorted(cases, key=lambda x: x[2])
 
                 # titles = [case[0] for case in sorted_cases]
                 # contents = [case[1] for case in sorted_cases]
@@ -416,7 +442,12 @@ class TextData:
             print('dev got!', time.time())
             dataset['test'] = deal_set(self.corpus_dir_test, test_box)
             print('test got!', time.time())
+            need_to_prune = self.Analysis(dataset)
+            dataset['train'] = self.prune(dataset['train'], need_to_prune)
+            dataset['dev'] = self.prune(dataset['dev'], need_to_prune)
+            dataset['test'] = self.prune(dataset['test'], need_to_prune)
             print('Saving dataset...')
+
             self.saveDataset(self.data_dump_path, dataset)  # Saving tf samples
 
         else:
@@ -425,6 +456,23 @@ class TextData:
             # print('test size:\t', len(dataset['test']))
             print('loaded')
         return dataset
+
+    def CareFields(self, field):
+        if not hasattr(self, 'importantFields'):
+            sf_file = open('./selected_fields.txt', 'r')
+            # self.importantFields = []
+            # for line in sf_file.readlines():
+            #     fie = line.split()[0].replace('_','')
+            #     print(fie)
+            #     self.importantFields.append(fie)
+            self.importantFields = [line.split()[0].replace('_','') for line in sf_file.readlines() if line[0] != '#']
+            self.importantFields = set(self.importantFields)
+        if field in  self.importantFields:
+            return True
+        else:
+            return False
+
+
 
     def saveDataset(self, filename, datasets):
         """Save samples to file
@@ -461,7 +509,7 @@ class TextData:
         return  datasets
 
     def transform_infobox(self, info):
-        items = info.split('\t')
+        items = info.strip().split('\t')
         items = [(t.split(':')[0], t.split(':')[1]) for t in items]
 
         dealed_items = []
@@ -470,7 +518,7 @@ class TextData:
                 num = int(item[0].split('_')[-1])
                 self.words.append(item[1])
                 if num == 1:
-                    title = '_'.join(item[0].split('_')[:-1])
+                    title = ''.join(item[0].split('_')[:-1])
                     if title in self.title2num:
                         self.title2num[title] += 1
                     else:
@@ -511,7 +559,7 @@ class TextData:
          #   print dealed_items
         return dealed_items
 
-    def read_word2vec(self, vocfile ):
+    def read_word2vec(self, vocfile, vectordim=100 ):
         word2index = dict()
         word2index['PAD'] = 0
         word2index['START_TOKEN'] = 1
@@ -528,8 +576,12 @@ class TextData:
 
         print(len(word2index),cnt)
         # dic = {w:numpy.random.normal(size=[int(sys.argv[1])]).astype('float32') for w in word2index}
+
+        index2vector = [np.random.normal(size=[vectordim]).astype('float32') for _ in range(cnt)]
+        index2vector = np.asarray(index2vector)
+        index2word = [w for w, n in word2index.items()]
         print ('Dictionary Got!')
-        return word2index
+        return word2index,  index2word, index2vector
 
     def read_word2vec_from_pretrained(self, embfile, topk_word_num=30000):
         word2index = dict()
@@ -573,6 +625,81 @@ class TextData:
             else:
                 res.append(self.word2index['UNK'])
         return res
+
+    def sequence2str(self, sequence, clean=False, reverse=False):
+        """Convert a list of integer into a human readable string
+        Args:
+            sequence (list<int>): the sentence to print
+            clean (Bool): if set, remove the <go>, <pad> and <eos> tokens
+            reverse (Bool): for the input, option to restore the standard order
+        Return:
+            str: the sentence
+        """
+
+        if not sequence:
+            return ''
+
+        if not clean:
+            return ' '.join([self.index2word[idx] for idx in sequence])
+
+        sentence = []
+        for wordId in sequence:
+            if wordId == self.word2index['END_TOKEN']:  # End of generated sentence
+                break
+            elif wordId != self.word2index['PAD'] and wordId != self.word2index['START_TOKEN']:
+                sentence.append(self.index2word[wordId])
+
+        if reverse:  # Reverse means input so no <eos> (otherwise pb with previous early stop)
+            sentence.reverse()
+
+        return sentence
+
+    def link(self, passage):
+        res = []
+        for p in passage:
+            res.extend(p)
+        return res
+
+    def playDataset(self):
+        """Print a random dialogue from the dataset
+        """
+        print('Randomly play samples:')
+        print(len(self.datasets['train']))
+        for i in range(args['playDataset']):
+            idSample = random.randint(0, len(self.datasets['train']) - 1)
+            print('sen: {} {}'.format(self.sequence2str(self.datasets['train'][idSample][1], clean=True), self.sequence2str(self.link(self.datasets['train'][idSample][3]))))
+            print()
+        pass
+
+    def Analysis(self, dataset):
+        self.index2title = {i:t for t,i in self.title2index.items()}
+        titles={}
+        need_to_prune = []
+        for ds in ['train', 'dev', 'test']:
+            titles[ds] = [title for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target in dataset[ds]]
+            fdist = nltk.FreqDist(titles[ds])
+            sort_count = fdist.most_common(1000)
+            print(ds+' :')
+            for t, c in sort_count:
+                print(self.index2title[t] + '\t'+ str(c))
+                if c > 10000 and ds == 'train':
+                    need_to_prune.append((t,c))
+
+        return need_to_prune
+
+    def prune(self, dataset, need_to_prune):
+        N={title:c for title, c in need_to_prune}
+        M={title:10000 for title, c in need_to_prune}
+        new_data = []
+        for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target in dataset:
+            if title in N:
+                if random.random() < M[title] / N[title]:
+                    new_data.append((title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target ))
+                    M[title] -= 1
+                N[title] -= 1
+            else:
+                new_data.append((title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target))
+        return new_data
 
 
 if __name__ == '__main__':

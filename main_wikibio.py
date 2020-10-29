@@ -70,8 +70,8 @@ class Runner:
     def main(self):
         args['datasetsize'] = -1
 
-        self.textData = td_wiki()
-        args['batchSize'] = 256
+        self.textData = td_wiki(glove=False)
+        args['batchSize'] = 32
         # args['model_arch'] = 'lstm_cte'
         self.start_token = self.textData.word2index['START_TOKEN']
         self.end_token = self.textData.word2index['END_TOKEN']
@@ -90,7 +90,7 @@ class Runner:
             self.model = self.model.to(args['device'])
             self.train()
 
-    def train(self, print_every=10000, plot_every=10, learning_rate=0.001):
+    def train(self, print_every=1000, plot_every=10, learning_rate=0.001):
         start = time.time()
         plot_losses = []
         print_loss_total = 0  # Reset every print_every
@@ -143,7 +143,7 @@ class Runner:
                 # scheduler.step()
 
                 # Print the loss values and time elapsed for every 20 batches
-                if (step % 20 == 0 and step != 0) or (step == len(batches) - 1):
+                if (step % print_every == 0 and step != 0) or (step == len(batches) - 1):
                     # Calculate time elapsed for 20 batches
                     time_elapsed = time.time() - t0_batch
 
@@ -163,13 +163,13 @@ class Runner:
             # =======================================
             # After the completion of each training epoch, measure the model's performance
             # on our validation set.
-            val_bleu, val_loss , val_accuracy, sen_acc = self.evaluate(self.model)
+            val_bleu, bleu_con, val_loss = self.evaluate(self.model)
 
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
             print(
-                f"{epoch_i + 1:^7} | {val_accuracy:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {sen_acc:^9.2f}")
+                f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {'-':^10}")
             print("-" * 70)
             print("\n")
 
