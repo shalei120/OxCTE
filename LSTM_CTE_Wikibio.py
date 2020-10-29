@@ -163,6 +163,14 @@ class LSTM_CTE_Model(nn.Module):
         answer_only_sequence = context_inputs_embs * sampled_seq[:,:,1].unsqueeze(2)
         no_answer_sequence = context_inputs_embs * sampled_seq[:,:,0].unsqueeze(2)
 
+        z_prob = self.softmax(z_logit)
+        answer_only_logp_z0 = torch.log(z_prob[:, :, 0])  # [B,T], log P(z = 0 | x)
+        answer_only_logp_z1 = torch.log(z_prob[:, :, 1])  # [B,T], log P(z = 1 | x)
+        answer_only_logpz = torch.where(sampled_seq[:, :, 1] == 0, answer_only_logp_z0, answer_only_logp_z1)
+        no_answer_logpz = torch.where(sampled_seq[:, :, 1] == 0,answer_only_logp_z1, answer_only_logp_z0)
+        answer_only_logpz = mask * answer_only_logpz
+        no_answer_logpz = mask * no_answer_logpz
+
         answer_only_output, answer_only_state = self.encoder_answer_only(answer_only_sequence)
         no_answer_output, no_answer_state = self.encoder_no_answer(no_answer_sequence)
 
@@ -185,7 +193,7 @@ class LSTM_CTE_Model(nn.Module):
         context_recon_loss_mean = torch.mean(context_recon_loss, dim=-1)
 
 
-        loss = answer_recon_loss_mean + context_recon_loss_mean
+        loss = answer_recon_loss_mean + context_recon_loss_mean + answer_recon_loss_mean.detach() * answer_only_logpz + context_recon_loss_mean.detach() * no_answer_logpz
         return loss, answer_only_state, no_ans_plus_pureans_state
 
     def forward(self, x):
