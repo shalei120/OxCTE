@@ -29,6 +29,7 @@ class Decoder(nn.Module):
         self.dtype = 'float32'
 
         self.embedding = embedding
+        self.hidden_dim = hidden_dim
 
         if args['decunit'] == 'lstm':
             self.dec_unit = nn.LSTM(input_size=input_dim,
@@ -39,7 +40,7 @@ class Decoder(nn.Module):
                                    hidden_size=hidden_dim,
                                    num_layers=args['dec_numlayer'])
 
-        self.out_unit = nn.Linear(args['hiddenSize'], args['vocabularySize'])
+        self.out_unit = nn.Linear(self.hidden_dim, args['vocabularySize'])
         self.logsoftmax = nn.LogSoftmax(dim = -1)
         self.v2state_linear= nn.Linear(args['hiddenSize'],args['dec_numlayer'] * args['hiddenSize'] * 2)
 
@@ -93,7 +94,7 @@ class Decoder(nn.Module):
         output, out_state = self.dec_unit(inputs, state)
         # output = output.cpu()
 
-        output = self.out_unit(output.view(batch_size * self.dec_len, args['hiddenSize']))
+        output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
         output = output.view(self.dec_len, batch_size, args['vocabularySize'])
         output = torch.transpose(output, 0,1)
         return output, out_state

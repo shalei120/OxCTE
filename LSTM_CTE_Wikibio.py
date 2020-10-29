@@ -61,10 +61,10 @@ class LSTM_CTE_Model(nn.Module):
 
         self.att_size_r = 60
         self.grm = GaussianOrthogonalRandomMatrix()
-        self.att_projection_matrix = Parameter(self.grm.get_2d_array(args['hiddenSize'], self.att_size_r))
+        self.att_projection_matrix = Parameter(self.grm.get_2d_array(args['embeddingSize'], self.att_size_r))
         self.M = Parameter(torch.randn([args['hiddenSize'], args['embeddingSize']]))
 
-        self.q_att_layer = nn.Linear(args['hiddenSize'], args['hiddenSize'], bias=False)
+        self.q_att_layer = nn.Linear(args['embeddingSize'], args['hiddenSize'], bias=False)
         self.c_att_layer = nn.Linear(args['hiddenSize'], args['hiddenSize'], bias=False)
         self.z_logit2prob = nn.Sequential(
             nn.Linear(args['hiddenSize'], 2)
@@ -133,6 +133,8 @@ class LSTM_CTE_Model(nn.Module):
         field = torch.LongTensor(x.field).to(args['device'])
         answer_dec = torch.LongTensor(x.decoderSeqs).to(args['device'])
         answer_tar = torch.LongTensor(x.targetSeqs).to(args['device'])
+        context_dec = torch.LongTensor(x.ContextDecoderSeqs).to(args['device'])
+        context_tar = torch.LongTensor(x.ContextTargetSeqs).to(args['device'])
         pure_answer = torch.LongTensor(x.answerSeqs).to(args['device'])
         context_mask = torch.FloatTensor(x.context_mask).to(args['device'])  # batch sentence
         sentence_mask = torch.FloatTensor(x.sentence_mask).to(args['device'])  # batch sennum contextlen
@@ -151,6 +153,7 @@ class LSTM_CTE_Model(nn.Module):
 
         en_context_output, (en_context_hidden, en_context_cell) = self.encoder(context_inputs_embs)  # b s e
 
+        # print(attentioned_context.size(), en_context_output.size())
         z_embs = self.tanh(self.q_att_layer(attentioned_context) + self.c_att_layer(en_context_output)) # b s h
         z_logit = self.z_logit2prob(z_embs).squeeze() # b s 2
         z_logit_fla = z_logit.reshape((batch_size * seq_len, 2))
@@ -171,18 +174,18 @@ class LSTM_CTE_Model(nn.Module):
         answer_recon_loss = self.CEloss(torch.transpose(answer_de_output, 1, 2), answer_tar)
         answer_mask = torch.sign(answer_tar.float())
         answer_recon_loss = torch.squeeze(answer_recon_loss) * answer_mask
-        answer_recon_loss_mean = torch.mean(answer_recon_loss, dim=-1)
+        answer_recon_loss_mean = torch.mean(answer_recon_loss)
 
         ################### no-answer context  + answer info -> origin context  #############
         pure_answer_embs = self.embedding(pure_answer)
         pure_answer_output, pure_answer_state = self.encoder_pure_answer(pure_answer_embs)
-        no_ans_plus_pureans_state = (torch.cat([no_answer_state[0], pure_answer_state[0]], dim = 1),
-                                     torch.cat([no_answer_state[1], pure_answer_state[1]], dim=1))
+        no_ans_plus_pureans_state = (torch.cat([no_answer_state[0], pure_answer_state[0]], dim = 2),
+                                     torch.cat([no_answer_state[1], pure_answer_state[1]], dim=2))
         context_de_output = self.decoder_no_answer(no_ans_plus_pureans_state, context_dec, context_tar)
         context_recon_loss = self.CEloss(torch.transpose(context_de_output, 1, 2), context_tar)
         context_mask = torch.sign(context_tar.float())
         context_recon_loss = torch.squeeze(context_recon_loss) * context_mask
-        context_recon_loss_mean = torch.mean(context_recon_loss, dim=-1)
+        context_recon_loss_mean = torch.mean(context_recon_loss)
 
 
         loss = answer_recon_loss_mean + context_recon_loss_mean
