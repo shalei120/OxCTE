@@ -52,7 +52,7 @@ class LSTM_CTE_Model(nn.Module):
         self.encoder_no_answer = Encoder(w2i, i2w)
         self.encoder_pure_answer = Encoder(w2i, i2w)
 
-        self.decoder_answer = Decoder(w2i, i2w, self.embedding)
+        self.decoder_answer = Decoder(w2i, i2w, self.embedding, pure_copy=True)
         self.decoder_no_answer = Decoder(w2i, i2w, self.embedding, input_dim = args['embeddingSize'] + args['hiddenSize'])
 
         self.ansmax2state_h = nn.Linear(args['embeddingSize'], args['hiddenSize']*2, bias=False)
@@ -198,7 +198,8 @@ class LSTM_CTE_Model(nn.Module):
         # no_answer_output, no_answer_state = self.encoder_no_answer(context_inputs_embs)
 
         # answer_latent_emb,_ = torch.max(answer_only_output)
-        answer_de_output = self.decoder_answer(answer_only_state, answer_dec, answer_tar)
+        enc_onehot = F.one_hot(context_inputs, num_classes=args['vocabularySize'])
+        answer_de_output = self.decoder_answer(answer_only_state, answer_dec, answer_tar, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
         answer_recon_loss = self.CEloss(torch.transpose(answer_de_output, 1, 2), answer_tar)
         answer_mask = torch.sign(answer_tar.float())
         answer_recon_loss = torch.squeeze(answer_recon_loss) * answer_mask

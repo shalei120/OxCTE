@@ -13,7 +13,7 @@ from queue import PriorityQueue
 import copy
 
 class Decoder(nn.Module):
-    def __init__(self,w2i, i2w, embedding, input_dim = args['embeddingSize'], hidden_dim = args['hiddenSize']):
+    def __init__(self,w2i, i2w, embedding, input_dim = args['embeddingSize'], hidden_dim = args['hiddenSize'], pure_copy = False):
         """
         Args:
             args: parameters of the model
@@ -25,6 +25,7 @@ class Decoder(nn.Module):
         self.word2index = w2i
         self.index2word = i2w
         self.max_length = args['maxLengthDeco']
+        self.pure_copy = pure_copy
 
         self.dtype = 'float32'
 
@@ -60,7 +61,7 @@ class Decoder(nn.Module):
 
         return en_state
 
-    def forward(self, en_state, decoderInputs, decoderTargets, cat = None):
+    def forward(self, en_state, decoderInputs, decoderTargets, cat = None, enc_embs = None):
         self.decoderInputs = decoderInputs
         # self.decoder_lengths = decoder_lengths
         self.decoderTargets = decoderTargets
@@ -73,7 +74,7 @@ class Decoder(nn.Module):
         else:
             d_in = dec_input_embed
         
-        de_outputs, de_state = self.decoder_t(en_state, d_in, self.batch_size)
+        de_outputs, de_state = self.decoder_t(en_state, d_in, self.batch_size, enc_embs = enc_embs)
 
         # de_outputs = self.softmax(de_outputs)
         return de_outputs
@@ -92,19 +93,33 @@ class Decoder(nn.Module):
         de_words = self.decoder_g_beam(en_state)
         return de_words
 
-    def decoder_t(self, initial_state, inputs, batch_size ):
+    def decoder_t(self, initial_state, inputs, batch_size, enc_embs = None, enc_mask=None, enc_onehot = None):
+        '''
+        :param initial_state:
+        :param inputs:
+        :param batch_size:
+        :param enc_embs:
+        :param enc_mask:
+        :param enc_onehot: b s v
+        :return:
+        '''
         inputs = torch.transpose(inputs, 0,1).contiguous()
         state = initial_state
 
         output, out_state = self.dec_unit(inputs, state)
         # output = output.cpu()
+        if not self.pure_copy:
+            output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
+            output = output.view(self.dec_len, batch_size, args['vocabularySize'])
+            output = torch.transpose(output, 0,1)
+        else:
+            copy_logit = torch.einsum('bth,bsh->bts',output, enc_embs)
+            copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
+            output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot)
 
-        output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
-        output = output.view(self.dec_len, batch_size, args['vocabularySize'])
-        output = torch.transpose(output, 0,1)
         return output, out_state
 
-    def decoder_g(self, initial_state, cat = None):
+    def decoder_g(self, initial_state, cat = None, enc_embs = None, enc_mask=None, enc_onehot = None):
         state = initial_state
         # sentence_emb = sentence_emb.view(self.batch_size,1, -1 )
 
@@ -124,7 +139,13 @@ class Decoder(nn.Module):
             # decoder_output, state = self.dec_unit(torch.cat([decoder_input, sentence_emb], dim = -1), state)
             decoder_output, state = self.dec_unit(d_in, state)
 
-            decoder_output = self.out_unit(decoder_output)
+            if not self.pure_copy:
+                decoder_output = self.out_unit(decoder_output)
+            else:
+                copy_logit = torch.einsum('bth,bsh->bts',decoder_output, enc_embs)
+                copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
+                decoder_output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot)
+
 
             topv, topi = decoder_output.data.topk(1, dim = -1)
 
