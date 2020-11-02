@@ -109,6 +109,8 @@ class Runner:
 
         max_accu = -1
         # accuracy = self.test('test', max_accu)
+
+        # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -124,6 +126,7 @@ class Runner:
 
             # Reset tracking variables at the beginning of each epoch
             total_loss, batch_loss, batch_counts = 0, 0, 0
+            batch_checkloss = 0
             # tra_accuracy = []
             # Put the model into the training mode
             self.model.train()
@@ -131,11 +134,12 @@ class Runner:
                 batch_counts += 1
                 optimizer.zero_grad()
                 # loss = self.model(batch)  # batch seq_len outsize
-                loss = self.model(batch)
+                loss, closs = self.model(batch)
                 # accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
                 # tra_accuracy.append(accuracy)
                 batch_loss += loss.item()
                 total_loss += loss.item()
+                batch_checkloss += closs
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 # Update parameters and the learning rate
@@ -149,9 +153,13 @@ class Runner:
 
                     # Print training results
                     print(f"{epoch_i + 1:^7} | {step:^7} | {batch_loss / batch_counts:^12.6f} | {'-':^10} | { '-':^10}| {time_elapsed:^9.2f}")
+                    print(batch_checkloss / batch_counts)
+                    print(self.model.tt)
                     tra_accuracy= []
                     # Reset batch tracking variables
                     batch_loss, batch_counts = 0, 0
+
+                    batch_checkloss = 0
                     t0_batch = time.time()
 
             # Calculate the average loss over the entire training data
@@ -163,8 +171,9 @@ class Runner:
             # =======================================
             # After the completion of each training epoch, measure the model's performance
             # on our validation set.
+            bleu_con = 0
             val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-
+            # val_bleu, val_loss = self.evaluate(self.model)
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
@@ -196,12 +205,28 @@ class Runner:
         gold_context = []
         # val_accuracy = []/
         # For each batch in our validation set...
+        pppt = False
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                loss, de_words_answer, de_words_context = model.predict(batch)
+                loss, de_words_answer, de_words_context, sampled_words = model.predict(batch)
+                # loss, de_words_answer = model.predict(batch)
                 pred_ans.extend(de_words_answer)
                 pred_context.extend(de_words_context)
+                if not pppt:
+
+                    pppt = True
+                    pind = np.random.choice(len(batch.contextSeqs))
+                    print(self.textData.index2title[batch.field[pind]])
+                    for w, choice in zip(batch.contextSeqs[pind], sampled_words[pind]):
+                        if choice == 1:
+                            print('<', self.textData.index2word[w], '>', end=' ')
+                        else:
+                            print(self.textData.index2word[w], end=' ')
+                    print()
+                    print(de_words_answer[pind])
+                    print(de_words_context[pind])
+                    print()
 
             gold_ans.extend([[r] for r in batch.raw_ans])
             gold_context.extend([[r] for r in batch.raw_context])
@@ -216,13 +241,14 @@ class Runner:
 
         # for i in range(10):
         #     print(gold_ans[i][0], pred_ans[i])
-
-        bleu = self.get_corpus_BLEU(gold_ans, pred_ans)
+        bleu = -1
+        bleu = self.get_F(gold_ans, pred_ans)
         bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
         return bleu, bleu_con, val_loss
+        # return bleu, val_loss
 
     def get_sentence_BLEU(self, actual_word_lists, generated_word_lists):
         bleu_scores = self.get_corpus_bleu_scores([actual_word_lists], [generated_word_lists])
@@ -238,6 +264,19 @@ class Runner:
         #     sumss += 0.25 * bleu_scores[s]
         # return sumss
         return bleu_scores[1]
+
+    def get_F(self, actual_word_lists, generated_word_lists):
+        total = 0
+        totalF=0
+        for gold, pred in zip(actual_word_lists, generated_word_lists):
+            gold_w = set(gold[0])
+            pred_w = set(pred)
+            inter = gold_w.intersection(pred_w)
+            f = len(inter) / len(gold_w)
+            totalF = (totalF * total + f) / (total + 1)
+            total += 1
+
+        return totalF
 
     def get_corpus_bleu_scores(self, actual_word_lists, generated_word_lists):
         bleu_score_weights = {

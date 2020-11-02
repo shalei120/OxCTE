@@ -351,7 +351,7 @@ class TextData:
                         sentences.append(words)
                         # print sent
 
-                    passages.append(sentences)
+                    passages.append(sentences[:3])
 
 
 
@@ -442,6 +442,8 @@ class TextData:
             print('dev got!', time.time())
             dataset['test'] = deal_set(self.corpus_dir_test, test_box)
             print('test got!', time.time())
+
+            self.index2title = {i: t for t, i in self.title2index.items()}
             need_to_prune = self.Analysis(dataset)
             dataset['train'] = self.prune(dataset['train'], need_to_prune)
             dataset['dev'] = self.prune(dataset['dev'], need_to_prune)
@@ -479,6 +481,7 @@ class TextData:
         Args:
             filename (str): pickle filename
         """
+
         with open(os.path.join(filename), 'wb') as handle:
             data = {  # Warning: If adding something here, also modifying loadDataset
                 'word2index': self.word2index,
@@ -505,6 +508,8 @@ class TextData:
                 self.title2index = data['title2index']
                 self.index2word_set = set(self.index2word)
             datasets = data['datasets']
+
+            self.index2title = {i: t for t, i in self.title2index.items()}
 
         return  datasets
 
@@ -672,7 +677,6 @@ class TextData:
         pass
 
     def Analysis(self, dataset):
-        self.index2title = {i:t for t,i in self.title2index.items()}
         titles={}
         need_to_prune = []
         for ds in ['train', 'dev', 'test']:
