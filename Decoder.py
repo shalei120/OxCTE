@@ -60,7 +60,7 @@ class Decoder(nn.Module):
 
         return en_state
 
-    def forward(self, en_state, decoderInputs, decoderTargets):
+    def forward(self, en_state, decoderInputs, decoderTargets, cat = None):
         self.decoderInputs = decoderInputs
         # self.decoder_lengths = decoder_lengths
         self.decoderTargets = decoderTargets
@@ -68,15 +68,20 @@ class Decoder(nn.Module):
         self.batch_size = self.decoderInputs.size()[0]
         self.dec_len = self.decoderInputs.size()[1]
         dec_input_embed = self.embedding(self.decoderInputs)
-        de_outputs, de_state = self.decoder_t(en_state, dec_input_embed, self.batch_size)
+        if cat is not None:
+            d_in = torch.cat([dec_input_embed, cat.repeat([1,self.dec_len,1])], dim = 2)
+        else:
+            d_in = dec_input_embed
+        
+        de_outputs, de_state = self.decoder_t(en_state, d_in, self.batch_size)
 
         # de_outputs = self.softmax(de_outputs)
         return de_outputs
 
-    def generate(self, en_state):
+    def generate(self, en_state, cat = None):
 
         self.batch_size = en_state[0].size()[1]
-        de_words = self.decoder_g(en_state)
+        de_words = self.decoder_g(en_state, cat)
         for k in range(len(de_words)):
             if 'END_TOKEN' in de_words[k]:
                 ind = de_words[k].index('END_TOKEN')
@@ -99,7 +104,7 @@ class Decoder(nn.Module):
         output = torch.transpose(output, 0,1)
         return output, out_state
 
-    def decoder_g(self, initial_state):
+    def decoder_g(self, initial_state, cat = None):
         state = initial_state
         # sentence_emb = sentence_emb.view(self.batch_size,1, -1 )
 
@@ -110,8 +115,14 @@ class Decoder(nn.Module):
         decoder_id_res = []
         for di in range(self.max_length):
 
+            if cat is not None:
+                cat1 = cat.transpose(0,1)
+                # print(decoder_input.size(), cat.size())
+                d_in = torch.cat([decoder_input, cat1], dim=2)
+            else:
+                d_in = decoder_input
             # decoder_output, state = self.dec_unit(torch.cat([decoder_input, sentence_emb], dim = -1), state)
-            decoder_output, state = self.dec_unit(decoder_input, state)
+            decoder_output, state = self.dec_unit(d_in, state)
 
             decoder_output = self.out_unit(decoder_output)
 
