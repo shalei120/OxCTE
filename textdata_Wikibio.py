@@ -4,7 +4,7 @@ Created on Sat Apr 09 16:02:06 2016
 
 @author: shalei
 """
-import nltk, os, re, sys
+import nltk, os, re, sys, copy
 import numpy, pickle, random
 from itertools import groupby
 import time
@@ -69,6 +69,7 @@ class TextData:
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
         self.title2num = {}
+        self.title2wordref = {}
         self.datasets = self.loadCorpus_Wikibio(glove=glove)
         # print(len(self.datasets['train']))
         # print(self.datasets['train'][-1])
@@ -269,21 +270,20 @@ class TextData:
 
             print('com')
 
-            sorted_title = []
+            self.sorted_title = []
             for t, n in self.title2num.items():
                 if n >= 100:
-                    sorted_title.append(t)
+                    self.sorted_title.append(t)
+
+            self.CareFields('')
 
             self.title2index = dict()
             self.title2index['PAD'] = 0
             self.title2index['START'] = 1
             self.title2index['END'] = 2
             self.title2index['UNK'] = 3
-            for t in sorted_title:
+            for t in self.sorted_title:
                 self.title2index[t] = len(self.title2index)
-
-
-
 
 
 
@@ -383,7 +383,15 @@ class TextData:
                         self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile, vectordim=args['embeddingSize'])
                     self.index2word_set = set(self.index2word)
 
-
+                    self.index2titlevector = np.random.random([len(self.title2index), args['embeddingSize']])
+                    for title, wordrefs in self.title2wordref.items():
+                        if title == 'fullname':
+                            wordrefs = ['full', 'name']
+                        t_emb = np.zeros([args['embeddingSize'], ])
+                        for w in wordrefs:
+                            t_emb += self.index2vector[self.word2index[w]]
+                        t_emb /= len(wordrefs)
+                        self.index2titlevector[self.title2index[title], :] = t_emb
 
                 assert len(boxes) == len(passages)
 
@@ -445,6 +453,8 @@ class TextData:
 
             self.index2title = {i: t for t, i in self.title2index.items()}
             need_to_prune = self.Analysis(dataset)
+
+
             dataset['train'] = self.prune(dataset['train'], need_to_prune)
             dataset['dev'] = self.prune(dataset['dev'], need_to_prune)
             dataset['test'] = self.prune(dataset['test'], need_to_prune)
@@ -468,7 +478,10 @@ class TextData:
             #     print(fie)
             #     self.importantFields.append(fie)
             self.importantFields = [line.split()[0].replace('_','') for line in sf_file.readlines() if line[0] != '#']
+            self.sorted_title = copy.copy(self.importantFields)
             self.importantFields = set(self.importantFields)
+            self.title2wordref = {line.split()[0].replace('_',''):line.split()[0].split('_') for line in sf_file.readlines() if line[0] != '#'}
+
         if field in  self.importantFields:
             return True
         else:
@@ -488,6 +501,7 @@ class TextData:
                 'index2word': self.index2word,
                 'index2vec' : self.index2vector,
                 'title2index': self.title2index,
+                'index2titlevector':self.index2titlevector,
                 'datasets': datasets
             }
             pickle.dump(data, handle, -1)  # Using the highest protocol available
@@ -506,6 +520,7 @@ class TextData:
                 self.index2word = data['index2word']
                 self.index2vector = data['index2vec']
                 self.title2index = data['title2index']
+                self.index2titlevector = data['index2titlevector']
                 self.index2word_set = set(self.index2word)
             datasets = data['datasets']
 
