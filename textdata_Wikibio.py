@@ -149,9 +149,9 @@ class TextData:
                         maxlen_con - len(batch.contextSeqs[i])))
             batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_con - len(batch.contextSeqs[i]))
-            batch.decoderSeqs.append([self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
+            batch.decoderSeqs.append([self.word2index['START_ANS']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i])))
-            batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+            batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_ANS']] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i])))
             batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i]))
@@ -585,7 +585,9 @@ class TextData:
         word2index['START_TOKEN'] = 1
         word2index['END_TOKEN'] = 2
         word2index['UNK'] = 3
-        cnt = 4
+        word2index['START_ANS'] = 4
+        word2index['END_ANS'] = 5
+        cnt = 6
         with open(vocfile, "r") as v:
 
             for line in v:
@@ -609,8 +611,9 @@ class TextData:
         word2index['START_TOKEN'] = 1
         word2index['END_TOKEN'] = 2
         word2index['UNK'] = 3
-        word2index['SOC'] = 4
-        cnt = 5
+        word2index['START_ANS'] = 4
+        word2index['END_ANS'] = 5
+        cnt = 6
         pre_cnts = cnt
         vectordim = -1
         index2vector = []
