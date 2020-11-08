@@ -15,7 +15,7 @@ class HP:
         args['rootDir'] = './artifacts/'
         args['retrain_model'] = 'No'
 
-        args['maxLength'] = 1000
+        args['maxLength'] = 300
         args['vocabularySize'] = 40000
 
         args['hiddenSize'] = 200 #300

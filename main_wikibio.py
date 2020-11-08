@@ -12,6 +12,8 @@ import torch.autograd as autograd
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from gpu_mem_track import  MemTracker
+import inspect
 from tqdm import tqdm
 import time, datetime
 import math, random
@@ -28,6 +30,7 @@ from LSTM_CTE_Wikibio import LSTM_CTE_Model
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
 parser.add_argument('--modelarch', '-m')
+parser.add_argument('--need_pretrain_model', '-npm')
 cmdargs = parser.parse_args()
 
 usegpu = True
@@ -43,10 +46,10 @@ if cmdargs.modelarch is None:
 else:
     args['model_arch'] = cmdargs.modelarch
 #
-# if cmdargs.choose is None:
-#     args['choose'] = 0
-# else:
-#     args['choose'] = int(cmdargs.choose)
+if cmdargs.need_pretrain_model is None:
+    args['need_pretrain_model'] = False
+else:
+    args['need_pretrain_model'] = cmdargs.need_pretrain_model
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -79,6 +82,9 @@ class Runner:
         args['TitleNum'] = self.textData.getTitleSize()
 
         print(self.textData.getVocabularySize())
+
+        frame = inspect.currentframe()  # define a frame to track
+        gpu_tracker = MemTracker(frame, path = args['rootDir']+'/')  # define a GPU tracker
         if args['model_arch'] == 'lstm':
             print('Using LSTM model.')
             self.model = LSTM_Model(self.textData.word2index, self.textData.index2word, torch.FloatTensor(self.textData.index2vector))
@@ -86,11 +92,17 @@ class Runner:
             self.train()
         elif args['model_arch'] == 'lstm_cte':
             print('Using LSTM control text editing model.')
-            self.model = LSTM_CTE_Model(self.textData.word2index, self.textData.index2word)
+            gpu_tracker.track()
+            self.model = LSTM_CTE_Model(self.textData.word2index, self.textData.index2word,
+                                        embs = torch.FloatTensor(self.textData.index2vector),
+                                        title_emb =  torch.FloatTensor(self.textData.index2titlevector))
+            gpu_tracker.track()
             self.model = self.model.to(args['device'])
-            self.train()
+            gpu_tracker.track()
+            print(sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True))
+            self.train(gpu_tracker)
 
-    def train(self, print_every=1000, plot_every=10, learning_rate=0.001):
+    def train(self, gpu_tracker, print_every=1000, plot_every=10, learning_rate=0.001):
         start = time.time()
         plot_losses = []
         print_loss_total = 0  # Reset every print_every
@@ -109,8 +121,9 @@ class Runner:
 
         max_accu = -1
         # accuracy = self.test('test', max_accu)
-
-        # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+        if args['need_pretrain_model'] == 'True':
+            self.pretrain_enc_dec(batches)
+        val_bleu, bleu_con, val_loss = self.evaluate(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -141,6 +154,7 @@ class Runner:
                 total_loss += loss.item()
                 batch_checkloss += closs
                 loss.backward()
+                gpu_tracker.track()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 # Update parameters and the learning rate
                 optimizer.step()
@@ -250,6 +264,86 @@ class Runner:
         return bleu, bleu_con, val_loss
         # return bleu, val_loss
 
+    def pretrain_enc_dec(self, batches):
+        optimizer = optim.Adam(self.model.get_pretrain_parameters(), lr=1e-3, eps=1e-3)  # , amsgrad=True)
+        model_ckpt_path = args['rootDir'] + '/pretrain.ckpt'
+        start = time.time()
+
+        iter = 1
+        n_iters = len(batches)
+        datasetExist = os.path.isfile(model_ckpt_path)
+        min_perplexity = -1
+        if not datasetExist:  # First time we load the database: creating all files
+            print('No pretrain ckpt file, retrain...')
+            total_loss, batch_loss, batch_counts = 0, 0, 0
+            for epoch_i in range(40):
+                iter += 1
+                losses = []
+                # =======================================
+                #               Training
+                # =======================================
+                # Print the header of the result table
+                print(f"{'Epoch':^7} | {'Batch':^7} | {'Train Loss':^12} | {'Val Loss':^10} | {'Val Acc':^9} | {'Elapsed':^9} | {timeSince(start, iter / n_iters)}")
+                print("-" * 70)
+
+                # Measure the elapsed time of each epoch
+                t0_epoch, t0_batch = time.time(), time.time()
+
+                self.model.train()
+                for step, batch in enumerate(batches):
+                    batch_counts += 1
+                    optimizer.zero_grad()
+                    # loss = self.model(batch)  # batch seq_len outsize
+                    losses = self.model.pre_training_forward(batch)
+                    # accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
+                    # tra_accuracy.append(accuracy)
+                    loss = losses.mean()
+                    batch_loss += loss.item()
+                    total_loss += loss.item()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.get_pretrain_parameters(), 1.0)
+                    # Update parameters and the learning rate
+                    optimizer.step()
+                    # scheduler.step()
+
+                    # Print the loss values and time elapsed for every 20 batches
+                    if (step % 1000 == 0 and step != 0) or (step == len(batches) - 1):
+                        # Calculate time elapsed for 20 batches
+                        time_elapsed = time.time() - t0_batch
+
+                        # Print training results
+                        print(f"{epoch_i + 1:^7} | {step:^7} | {batch_loss / batch_counts:^12.6f} | {'-':^10} | { '-':^10}| {time_elapsed:^9.2f}")
+                        tra_accuracy= []
+                        # Reset batch tracking variables
+
+                        t0_batch = time.time()
+
+                        perplexity = self.Cal_perplexity_for_dataset('test')
+                        if perplexity < min_perplexity or min_perplexity == -1:
+                            print('perplexity = ', perplexity, '>= min_perplexity (', min_perplexity, '), saving model...')
+                            torch.save(self.model.get_pretrain_parameters(), model_ckpt_path)
+                            min_perplexity = perplexity
+
+        else:
+            print('Pretrained file found, load from ' + model_ckpt_path)
+            torch.load(model_ckpt_path, map_location=args['device'])
+
+    def Cal_perplexity_for_dataset(self, datasetname):
+        if not hasattr(self, 'testbatches'):
+            self.testbatches = {}
+        if datasetname not in self.testbatches:
+            self.testbatches[datasetname] = self.textData.getBatches(datasetname)
+        num = 0
+        ave_loss = 0
+        with torch.no_grad():
+            for batch in self.testbatches[datasetname]:
+                loss = self.model.pre_training_forward(batch)
+                ave_loss = (ave_loss * num + sum(loss)) / (num + len(loss))
+                num += len(loss)
+
+        return torch.exp(ave_loss)
+
+
     def get_sentence_BLEU(self, actual_word_lists, generated_word_lists):
         bleu_scores = self.get_corpus_bleu_scores([actual_word_lists], [generated_word_lists])
         sumss = 0
@@ -294,6 +388,8 @@ class Runner:
                     weights=bleu_score_weights[i + 1]), 4)
 
         return bleu_scores
+
+
 
 
 if __name__ == '__main__':

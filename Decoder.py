@@ -13,7 +13,7 @@ from queue import PriorityQueue
 import copy
 
 class Decoder(nn.Module):
-    def __init__(self,w2i, i2w, embedding, input_dim = args['embeddingSize'], hidden_dim = args['hiddenSize'], pure_copy = False):
+    def __init__(self,w2i, i2w, embedding, input_dim = args['embeddingSize'], hidden_dim = args['hiddenSize'], copy = 'no', max_dec_len=args['maxLengthDeco']):
         """
         Args:
             args: parameters of the model
@@ -24,8 +24,8 @@ class Decoder(nn.Module):
 
         self.word2index = w2i
         self.index2word = i2w
-        self.max_length = args['maxLengthDeco']
-        self.pure_copy = pure_copy
+        self.max_length = max_dec_len
+        self.copy = copy
 
         self.dtype = 'float32'
 
@@ -43,6 +43,7 @@ class Decoder(nn.Module):
 
         self.out_unit = nn.Linear(self.hidden_dim, args['vocabularySize'])
         self.logsoftmax = nn.LogSoftmax(dim = -1)
+        self.softmax = nn.Softmax(dim = -1)
         self.v2state_linear= nn.Linear(args['hiddenSize'],args['dec_numlayer'] * args['hiddenSize'] * 2)
 
         self.element_len = args['hiddenSize']
@@ -61,7 +62,7 @@ class Decoder(nn.Module):
 
         return en_state
 
-    def forward(self, en_state, decoderInputs, decoderTargets, cat = None, enc_embs = None):
+    def forward(self, en_state, decoderInputs, decoderTargets, cat = None, enc_embs = None, enc_mask=None, enc_onehot = None):
         self.decoderInputs = decoderInputs
         # self.decoder_lengths = decoder_lengths
         self.decoderTargets = decoderTargets
@@ -74,15 +75,15 @@ class Decoder(nn.Module):
         else:
             d_in = dec_input_embed
         
-        de_outputs, de_state = self.decoder_t(en_state, d_in, self.batch_size, enc_embs = enc_embs)
+        de_outputs, de_state = self.decoder_t(en_state, d_in, self.batch_size, enc_embs = enc_embs, enc_mask=enc_mask, enc_onehot = enc_onehot)
 
         # de_outputs = self.softmax(de_outputs)
         return de_outputs
 
-    def generate(self, en_state, cat = None):
+    def generate(self, en_state, cat = None,  enc_embs = None, enc_mask=None, enc_onehot = None):
 
         self.batch_size = en_state[0].size()[1]
-        de_words = self.decoder_g(en_state, cat)
+        de_words = self.decoder_g(en_state, cat, enc_embs = enc_embs, enc_mask=enc_mask, enc_onehot = enc_onehot)
         for k in range(len(de_words)):
             if 'END_TOKEN' in de_words[k]:
                 ind = de_words[k].index('END_TOKEN')
@@ -108,14 +109,31 @@ class Decoder(nn.Module):
 
         output, out_state = self.dec_unit(inputs, state)
         # output = output.cpu()
-        if not self.pure_copy:
+        if self.copy == 'no':
             output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
             output = output.view(self.dec_len, batch_size, args['vocabularySize'])
             output = torch.transpose(output, 0,1)
-        else:
-            copy_logit = torch.einsum('bth,bsh->bts',output, enc_embs)
+            output = self.logsoftmax(output)
+        elif self.copy == 'pure':
+            # print(output.size(), enc_embs.size())
+            copy_logit = torch.einsum('bth,bsh->bts',output.transpose(0,1), enc_embs)
             copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
-            output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot)
+            output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
+            output = self.logsoftmax(output)
+        elif self.copy == 'semi':
+            lstm_output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
+            lstm_output = lstm_output.view(self.dec_len, batch_size, args['vocabularySize'])
+            lstm_output = torch.transpose(lstm_output, 0,1)
+
+            copy_logit = torch.einsum('bth,bsh->bts',output.transpose(0,1), enc_embs)
+            copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
+            copy_output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
+
+            lstm_probs = self.softmax(lstm_output)
+            copy_probs = self.softmax(copy_output)
+            total_probs = 0.5 * (lstm_probs + copy_probs)
+            output = torch.log(total_probs)
+
 
         return output, out_state
 
@@ -139,12 +157,26 @@ class Decoder(nn.Module):
             # decoder_output, state = self.dec_unit(torch.cat([decoder_input, sentence_emb], dim = -1), state)
             decoder_output, state = self.dec_unit(d_in, state)
 
-            if not self.pure_copy:
+            if self.copy == 'no':
                 decoder_output = self.out_unit(decoder_output)
-            else:
-                copy_logit = torch.einsum('bth,bsh->bts',decoder_output, enc_embs)
+            elif self.copy == 'pure':
+                # print(decoder_output.size(), enc_embs.size())
+                copy_logit = torch.einsum('bth,bsh->bts',decoder_output.transpose(0,1), enc_embs)
                 copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
-                decoder_output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot)
+                decoder_output = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
+                decoder_output = decoder_output.transpose(0, 1)
+            elif self.copy == 'semi':
+                lstm_output = self.out_unit(decoder_output)
+
+                copy_logit = torch.einsum('bth,bsh->bts',decoder_output.transpose(0,1), enc_embs)
+                copy_logit = copy_logit * enc_mask.unsqueeze(1) + (1-enc_mask.unsqueeze(1)) * (-1e30) # bts
+                copy_logit = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
+                copy_logit = copy_logit.transpose(0, 1)
+
+                lstm_output = self.softmax(lstm_output)
+                copy_logit = self.softmax(copy_logit)
+                decoder_output = 0.5 * (lstm_output + copy_logit)
+
 
 
             topv, topi = decoder_output.data.topk(1, dim = -1)
