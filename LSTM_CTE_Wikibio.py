@@ -37,8 +37,8 @@ class LSTM_CTE_Model(nn.Module):
         self.index2word = i2w
         self.max_length = args['maxLengthDeco']
 
-        self.NLLloss = torch.nn.NLLLoss(reduction='none')
-        self.CEloss = torch.nn.CrossEntropyLoss(reduction='none')
+        self.NLLloss = torch.nn.NLLLoss(ignore_index=0)
+        self.CEloss = torch.nn.CrossEntropyLoss(ignore_index=0)
 
         if embs is not None:
             self.embedding = nn.Embedding.from_pretrained(embs)
@@ -187,11 +187,11 @@ class LSTM_CTE_Model(nn.Module):
         answer_only_sequence = context_inputs_embs * sampled_seq[:,:,1].unsqueeze(2)
         no_answer_sequence = context_inputs_embs * sampled_seq[:,:,0].unsqueeze(2).detach()
 
-        # answer_only_logp_z0 = torch.log(z_prob[:, :, 0].clamp(eps,1.0))  # [B,T], log P(z = 0 | x)
-        # answer_only_logp_z1 = torch.log(z_prob[:, :, 1].clamp(eps,1.0))  # [B,T], log P(z = 1 | x)
-        # answer_only_logpz = torch.where(sampled_seq[:, :, 1] == 0, answer_only_logp_z0, answer_only_logp_z1)
+        answer_only_logp_z0 = torch.log(z_prob[:, :, 0].clamp(eps,1.0))  # [B,T], log P(z = 0 | x)
+        answer_only_logp_z1 = torch.log(z_prob[:, :, 1].clamp(eps,1.0))  # [B,T], log P(z = 1 | x)
+        answer_only_logpz = torch.where(sampled_seq[:, :, 1] == 0, answer_only_logp_z0, answer_only_logp_z1)
         # no_answer_logpz = torch.where(sampled_seq[:, :, 1] == 0,answer_only_logp_z1, answer_only_logp_z0)
-        # answer_only_logpz = mask * answer_only_logpz
+        answer_only_logpz = mask * answer_only_logpz
         # no_answer_logpz = mask * no_answer_logpz
 
         # answer_only_output, answer_only_state = self.encoder_answer_only(answer_only_sequence)
@@ -220,19 +220,18 @@ class LSTM_CTE_Model(nn.Module):
         context_de_output = self.decoder_no_answer(no_answer_state, context_dec, context_tar, cat=pure_answer_output, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
         # context_de_output = self.decoder_no_answer(en_context_state, context_dec, context_tar)#, cat=torch.max(pure_answer_output, dim = 1, keepdim=True)[0])
         context_recon_loss = self.NLLloss(torch.transpose(context_de_output, 1, 2), context_tar)
-        context_mask = torch.sign(context_tar.float())
-        context_recon_loss = torch.squeeze(context_recon_loss) * context_mask
-        context_recon_loss_mean = torch.mean(context_recon_loss, dim = 1)
+        # context_mask = torch.sign(context_tar.float())
+        # context_recon_loss = torch.squeeze(context_recon_loss) * context_mask
+        context_recon_loss_mean = context_recon_loss#torch.mean(context_recon_loss, dim = 1)
 
 
-        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.9))
+        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
         # I_x_z = torch.abs(torch.mean(z_prob[:, :, 1], 1) -0.1)
 
-        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean.mean() #\
-               # + ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)
+        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
                #    + context_recon_loss_mean.detach() * no_answer_logpz.mean(1)).mean()
         # loss = context_recon_loss_mean.mean()
-        self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean.mean(), (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
+        self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
         # self.tt = [context_recon_loss_mean.mean(),]
         # self.tt = [answer_recon_loss_mean.mean() , (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
         return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output, mask,  enc_onehot

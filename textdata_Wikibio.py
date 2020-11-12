@@ -147,11 +147,12 @@ class TextData:
                         maxlen_con - len(batch.contextSeqs[i])))
             batch.ContextTargetSeqs.append(batch.contextSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
                         maxlen_con - len(batch.contextSeqs[i])))
-            batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
-                        maxlen_con - len(batch.contextSeqs[i]))
-            batch.decoderSeqs.append([self.word2index['START_ANS']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
+            # batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
+            #             maxlen_con - len(batch.contextSeqs[i]))
+            batch.contextSeqs[i] = batch.ContextTargetSeqs[i]
+            batch.decoderSeqs.append([self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i])))
-            batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_ANS']] + [self.word2index['PAD']] * (
+            batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i])))
             batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i]))
@@ -358,7 +359,7 @@ class TextData:
                 if 'train' in setname:
                     if not glove:
                         fdist = nltk.FreqDist(self.words)
-                        sort_count = fdist.most_common(40000)
+                        sort_count = fdist.most_common(60000)
                         print('sort_count: ', len(sort_count))
 
                         # nnn=8
@@ -378,7 +379,7 @@ class TextData:
 
                     if glove:
                         self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
-                            self.vocfile)
+                            self.vocfile, topk_word_num=60000)
                     else:
                         self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile, vectordim=args['embeddingSize'])
                     self.index2word_set = set(self.index2word)
