@@ -411,7 +411,11 @@ class TextData:
                     # target.append(word2index['END_TOKEN'])
                     # target_len += 1
                     res = []
-                    for field, content, content_len, raw_content, raw_target in zip(titles, contents, contents_len, raw_contents, p):
+                    raw_target = []
+                    for sen in p:
+                        raw_target.extend(sen)
+
+                    for field, content, content_len, raw_content in zip(titles, contents, contents_len, raw_contents):
                         # field = field.replace('_','')
                         if field == self.title2index['UNK'] or content_len > 10 or unk_ind in content:
                             continue
