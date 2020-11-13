@@ -84,7 +84,7 @@ class Runner:
         print(self.textData.getVocabularySize())
 
         frame = inspect.currentframe()  # define a frame to track
-        gpu_tracker = MemTracker(frame, path = args['rootDir']+'/')  # define a GPU tracker
+        # gpu_tracker = MemTracker(frame, path = args['rootDir']+'/')  # define a GPU tracker
         if args['model_arch'] == 'lstm':
             print('Using LSTM model.')
             self.model = LSTM_Model(self.textData.word2index, self.textData.index2word, torch.FloatTensor(self.textData.index2vector))
@@ -92,15 +92,15 @@ class Runner:
             self.train()
         elif args['model_arch'] == 'lstm_cte':
             print('Using LSTM control text editing model.')
-            gpu_tracker.track()
+            # gpu_tracker.track()
             self.model = LSTM_CTE_Model(self.textData.word2index, self.textData.index2word,
                                         embs = torch.FloatTensor(self.textData.index2vector),
                                         title_emb =  torch.FloatTensor(self.textData.index2titlevector))
-            gpu_tracker.track()
+            # gpu_tracker.track()
             self.model = self.model.to(args['device'])
-            gpu_tracker.track()
+            # gpu_tracker.track()
             print(sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True))
-            self.train(gpu_tracker)
+            self.train(gpu_tracker=None)
 
     def train(self, gpu_tracker, print_every=1000, plot_every=10, learning_rate=0.001):
         start = time.time()
@@ -123,7 +123,7 @@ class Runner:
         # accuracy = self.test('test', max_accu)
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
-        val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+        # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -154,8 +154,8 @@ class Runner:
                 total_loss += loss.item()
                 batch_checkloss += closs
                 loss.backward()
-                gpu_tracker.track()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                # gpu_tracker.track()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5.0)
                 # Update parameters and the learning rate
                 optimizer.step()
                 # scheduler.step()

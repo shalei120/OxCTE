@@ -50,7 +50,7 @@ class LSTM_CTE_Model(nn.Module):
         else:
             self.field_embedding = nn.Embedding(args['TitleNum'], args['embeddingSize'])
 
-        self.encoder = Encoder(w2i, i2w)
+        self.encoder = Encoder(w2i, i2w, bidirectional=True)
         # self.encoder_answer_only = Encoder(w2i, i2w)
         self.encoder_no_answer = Encoder(w2i, i2w)
         self.encoder_pure_answer = Encoder(w2i, i2w)
@@ -68,9 +68,9 @@ class LSTM_CTE_Model(nn.Module):
         self.att_size_r = 60
         # self.grm = GaussianOrthogonalRandomMatrix()
         # self.att_projection_matrix = Parameter(self.grm.get_2d_array(args['embeddingSize'], self.att_size_r))
-        self.M = Parameter(torch.randn([args['embeddingSize'], args['hiddenSize'],2]))
+        self.M = Parameter(torch.randn([args['embeddingSize'], args['hiddenSize']*2,2]))
 
-        # self.q_att_layer = nn.Linear(args['embeddingSize'], args['hiddenSize'], bias=False)
+        self.shrink_copy_input= nn.Linear(args['hiddenSize']*2, args['hiddenSize'], bias=False)
         # self.c_att_layer = nn.Linear(args['hiddenSize'], args['hiddenSize'], bias=False)
         # self.z_logit2prob = nn.Sequential(
         #     nn.Linear(args['hiddenSize'], 2)
@@ -189,7 +189,8 @@ class LSTM_CTE_Model(nn.Module):
 
         answer_only_logp_z0 = torch.log(z_prob[:, :, 0].clamp(eps,1.0))  # [B,T], log P(z = 0 | x)
         answer_only_logp_z1 = torch.log(z_prob[:, :, 1].clamp(eps,1.0))  # [B,T], log P(z = 1 | x)
-        answer_only_logpz = torch.where(sampled_seq[:, :, 1] == 0, answer_only_logp_z0, answer_only_logp_z1)
+        # answer_only_logpz = (1-sampled_seq[:, :, 1]) * answer_only_logp_z0 + sampled_seq[:, :, 1] * answer_only_logp_z1
+        answer_only_logpz = torch.where(sampled_seq[:, :, 1] == 0,answer_only_logp_z0, answer_only_logp_z1)
         # no_answer_logpz = torch.where(sampled_seq[:, :, 1] == 0,answer_only_logp_z1, answer_only_logp_z0)
         answer_only_logpz = mask * answer_only_logpz
         # no_answer_logpz = mask * no_answer_logpz
@@ -203,13 +204,14 @@ class LSTM_CTE_Model(nn.Module):
         no_answer_output, no_answer_state = self.encoder_no_answer(no_answer_sequence)
         # no_answer_output, no_answer_state = self.encoder_no_answer(context_inputs_embs)
 
+        en_context_output_shrink = self.shrink_copy_input(en_context_output)
         # answer_latent_emb,_ = torch.max(answer_only_output)
         enc_onehot = F.one_hot(context_inputs, num_classes=args['vocabularySize'])
-        answer_de_output = self.decoder_answer(answer_only_state, answer_dec, answer_tar, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
+        answer_de_output = self.decoder_answer(answer_only_state, answer_dec, answer_tar, enc_embs = en_context_output_shrink, enc_mask=mask , enc_onehot = enc_onehot)
         answer_recon_loss = self.NLLloss(torch.transpose(answer_de_output, 1, 2), answer_tar)
-        answer_mask = torch.sign(answer_tar.float())
-        answer_recon_loss = torch.squeeze(answer_recon_loss) * answer_mask
-        answer_recon_loss_mean = torch.mean(answer_recon_loss, dim = 1)
+        # answer_mask = torch.sign(answer_tar.float())
+        # answer_recon_loss = torch.squeeze(answer_recon_loss) * answer_mask
+        answer_recon_loss_mean = answer_recon_loss#torch.mean(answer_recon_loss, dim = 1)
         #
         # ################### no-answer context  + answer info -> origin context  #############
         pure_answer_embs = self.embedding(pure_answer)
@@ -217,7 +219,7 @@ class LSTM_CTE_Model(nn.Module):
         pure_answer_output = torch.mean(pure_answer_embs, dim = 1, keepdim=True)
         # no_ans_plus_pureans_state = (torch.cat([no_answer_state[0], pure_answer_state[0]], dim = 2),
         #                              torch.cat([no_answer_state[1], pure_answer_state[1]], dim=2))
-        context_de_output = self.decoder_no_answer(no_answer_state, context_dec, context_tar, cat=pure_answer_output, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
+        context_de_output = self.decoder_no_answer(no_answer_state, context_dec, context_tar, cat=pure_answer_output, enc_embs = en_context_output_shrink, enc_mask=mask, enc_onehot = enc_onehot)
         # context_de_output = self.decoder_no_answer(en_context_state, context_dec, context_tar)#, cat=torch.max(pure_answer_output, dim = 1, keepdim=True)[0])
         context_recon_loss = self.NLLloss(torch.transpose(context_de_output, 1, 2), context_tar)
         # context_mask = torch.sign(context_tar.float())
@@ -225,16 +227,16 @@ class LSTM_CTE_Model(nn.Module):
         context_recon_loss_mean = context_recon_loss#torch.mean(context_recon_loss, dim = 1)
 
 
-        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
-        # I_x_z = torch.abs(torch.mean(z_prob[:, :, 1], 1) -0.1)
+        # I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
+        I_x_z = torch.abs(torch.mean(z_prob[:, :, 1], 1) -0.15)
 
-        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
+        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
                #    + context_recon_loss_mean.detach() * no_answer_logpz.mean(1)).mean()
         # loss = context_recon_loss_mean.mean()
         self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
         # self.tt = [context_recon_loss_mean.mean(),]
         # self.tt = [answer_recon_loss_mean.mean() , (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
-        return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output, mask,  enc_onehot
+        return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output_shrink, mask,  enc_onehot
         # return loss, answer_only_state,  (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()
         # return loss, None, en_context_state, pure_answer_output, 0
 
@@ -264,6 +266,7 @@ class LSTM_CTE_Model(nn.Module):
         mask = torch.sign(context_inputs).float()
         enc_onehot = F.one_hot(context_inputs, num_classes=args['vocabularySize'])
         batch_size = context_inputs.size()[0]
+
         context_de_output = self.decoder_no_answer(en_context_state, context_dec, context_tar, cat=torch.zeros([batch_size,1, args['embeddingSize']]).to(args['device']), enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
         context_recon_loss = self.NLLloss(torch.transpose(context_de_output, 1, 2), context_tar)
         context_mask = torch.sign(context_tar.float())
