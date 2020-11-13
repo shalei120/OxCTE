@@ -358,7 +358,7 @@ class TextData:
                 if 'train' in setname:
                     if not glove:
                         fdist = nltk.FreqDist(self.words)
-                        sort_count = fdist.most_common(40000)
+                        sort_count = fdist.most_common(80000)
                         print('sort_count: ', len(sort_count))
 
                         # nnn=8
@@ -378,7 +378,7 @@ class TextData:
 
                     if glove:
                         self.word2index, self.index2word, self.index2vector = self.read_word2vec_from_pretrained(
-                            self.vocfile)
+                            self.vocfile, topk_word_num=80000)
                     else:
                         self.word2index, self.index2word, self.index2vector = self.read_word2vec(self.vocfile, vectordim=args['embeddingSize'])
                     self.index2word_set = set(self.index2word)
