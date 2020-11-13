@@ -21,7 +21,7 @@ class HP:
         args['hiddenSize'] = 200 #300
         args['numLayers'] = 2
         args['initEmbeddings'] = True
-        args['embeddingSize'] = 300 #300
+        args['embeddingSize'] = 100 #300
         # args['embeddingSource'] = "GoogleNews-vectors-negative300.bin"
 
         args['numEpochs'] = 200
