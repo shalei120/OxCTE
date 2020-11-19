@@ -9,6 +9,7 @@ cached_test_bert-base-uncased_384
 artifacts/
 runs/
 models_bert/
+*.swp
 
 # C extensions
 *.so
