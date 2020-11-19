@@ -48,7 +48,7 @@ class Runner:
     def main(self):
         args['datasetsize'] = -1
 
-        self.textData = td_wiki(glove=False)
+        self.textData = td_wiki(glove=False, datadumpname = 'AnnotationTmpData')
         args['batchSize'] = 32
         # args['model_arch'] = 'lstm_cte'
         self.start_token = self.textData.word2index['START_TOKEN']
@@ -60,7 +60,21 @@ class Runner:
 
         testset = self.textData.datasets['test']
 
+        self.title2contents = self.GetTitle2Contents(testset)
+
         self.SampleDataFromDataset(testset)
+
+    def GetTitle2Contents(self, dataset):
+        title2Contents = {}
+        for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_context in testset:
+            if title not in title2Contents:
+                title2Contents[title] = set()
+            title2Contents[title].add(raw_content)
+
+        for t in title2Contents.keys():
+            title2Contents[t] = list(title2Contents[t])
+        return title2Contents
+
 
     def SampleDataFromDataset(self, testset, total = 1500):
         titles = [line[0] for line in testset]
@@ -83,7 +97,8 @@ class Runner:
 
         with open(args['rootDir'] + 'AnnoTestData.txt', 'w') as wh:
             for title, raw_content, raw_context in sampled_test_set:
-                wh.write(title + '\t' + ' '.join(raw_content) + '\t' + ' '.join(raw_context) + '\n')
+                sample_content = random.choice(self.title2contents[title])
+                wh.write(title + '\t' + ' '.join(raw_content) + '\t' + ' '.join(sample_content) +  '\t' + ' '.join(raw_context) + '\n')
             wh.close()
 
 

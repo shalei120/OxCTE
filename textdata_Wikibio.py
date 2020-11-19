@@ -57,7 +57,7 @@ class TextData:
     """
 
 
-    def __init__(self, glove = True):
+    def __init__(self, glove = True, datadumpname = 'Wikibio'):
         """Load all conversations
         Args:
             args: parameters of the model
@@ -65,7 +65,7 @@ class TextData:
 
         # Path variables
         self.tokenizer = word_tokenize
-
+        self.datadump_filename = datadumpname
         self.trainingSamples = []  # 2d array containing each question and his answer [[input,target]]
 
         self.title2num = {}
@@ -226,8 +226,8 @@ class TextData:
         self.corpus_dir_train = self.basedir + 'train/train'
         self.corpus_dir_dev =  self.basedir + 'valid/valid'
         self.corpus_dir_test =  self.basedir + 'test/test'
-        self.data_dump_path = args['rootDir'] + '/Wikibio.pkl'
-        self.vocfile = args['rootDir'] + '/voc_wikibio.txt'
+        self.data_dump_path = args['rootDir'] + '/'+self.datadump_filename+'.pkl'
+        self.vocfile = args['rootDir'] + '/voc_'+self.datadump_filename+'.txt'
 
         if glove:
             self.vocfile = args['rootDir'] + '/glove.6B.' + str(vec_dim) + 'd.txt'
