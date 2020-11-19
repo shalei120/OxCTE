@@ -213,8 +213,13 @@ class LSTM_CTE_Model(nn.Module):
         # answer_recon_loss = torch.squeeze(answer_recon_loss) * answer_mask
         answer_recon_loss_mean = answer_recon_loss#torch.mean(answer_recon_loss, dim = 1)
         #
-        # ################### no-answer context  + answer info -> origin context  #############
+        ######################## no_answer do not contain answer #####################
         pure_answer_embs = self.embedding(pure_answer)
+        cross_sim = torch.max(torch.einsum('bse,bae->bsa', no_answer_sequence, pure_answer_embs)/(torch.norm(no_answer_sequence, dim=2).unsqueeze(2) + eps)/(torch.norm(pure_answer_embs, dim = 2).unsqueeze(1)+eps))
+
+
+
+        # ################### no-answer context  + answer info -> origin context  #############
         # pure_answer_output, pure_answer_state = self.encoder_pure_answer(pure_answer_embs)
         pure_answer_output = torch.mean(pure_answer_embs, dim = 1, keepdim=True)
         # no_ans_plus_pureans_state = (torch.cat([no_answer_state[0], pure_answer_state[0]], dim = 2),
@@ -227,10 +232,10 @@ class LSTM_CTE_Model(nn.Module):
         context_recon_loss_mean = context_recon_loss#torch.mean(context_recon_loss, dim = 1)
 
 
-        # I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
-        I_x_z = torch.abs(torch.mean(z_prob[:, :, 1], 1) -0.15)
+        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
+        # I_x_z = torch.abs(torch.mean(torch.log(z_prob[:, :, 1]+eps), 1) -np.log(0.1))
 
-        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
+        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + cross_sim #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
                #    + context_recon_loss_mean.detach() * no_answer_logpz.mean(1)).mean()
         # loss = context_recon_loss_mean.mean()
         self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]

@@ -62,7 +62,7 @@ class Runner:
 
         self.SampleDataFromDataset(testset)
 
-    def SampleDataFromDataset(self, testset, total = 1000):
+    def SampleDataFromDataset(self, testset, total = 1500):
         titles = [line[0] for line in testset]
         fdist = nltk.FreqDist(titles)
         sort_count = fdist.most_common(100)
@@ -79,6 +79,7 @@ class Runner:
                 sampled_test_set.append([self.index2title[title], raw_content, raw_context])
                 title2M[title] -= 1
             title2num[title] -= 1
+            # sampled_test_set.append([self.index2title[title], raw_content, raw_context])
 
         with open(args['rootDir'] + 'AnnoTestData.txt', 'w') as wh:
             for title, raw_content, raw_context in sampled_test_set:
