@@ -66,10 +66,10 @@ class Runner:
 
     def GetTitle2Contents(self, dataset):
         title2Contents = {}
-        for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_context in testset:
+        for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_context in dataset:
             if title not in title2Contents:
                 title2Contents[title] = set()
-            title2Contents[title].add(raw_content)
+            title2Contents[title].add(' '.join(raw_content))
 
         for t in title2Contents.keys():
             title2Contents[t] = list(title2Contents[t])
@@ -90,15 +90,15 @@ class Runner:
         sampled_test_set = []
         for title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_context in testset:
             if np.random.rand() < title2M[title] / title2num[title]:
-                sampled_test_set.append([self.index2title[title], raw_content, raw_context])
+                sampled_test_set.append([title, self.index2title[title], raw_content, raw_context])
                 title2M[title] -= 1
             title2num[title] -= 1
             # sampled_test_set.append([self.index2title[title], raw_content, raw_context])
 
         with open(args['rootDir'] + 'AnnoTestData.txt', 'w') as wh:
-            for title, raw_content, raw_context in sampled_test_set:
-                sample_content = random.choice(self.title2contents[title])
-                wh.write(title + '\t' + ' '.join(raw_content) + '\t' + ' '.join(sample_content) +  '\t' + ' '.join(raw_context) + '\n')
+            for tind, title, raw_content, raw_context in sampled_test_set:
+                sample_content = random.choice(self.title2contents[tind])
+                wh.write(title + '\t' + ' '.join(raw_content) + '\t' + sample_content +  '\t' + ' '.join(raw_context) + '\n')
             wh.close()
 
 

@@ -6,6 +6,7 @@ import argparse
 import os
 
 from textdata_Wikibio import TextData as td_wiki
+from textdata_Wikibio import Batch
 import time, sys
 import torch
 import torch.autograd as autograd
@@ -187,6 +188,7 @@ class Runner:
             # on our validation set.
             bleu_con = 0
             val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+            self.Test(self.model)
             # val_bleu, val_loss = self.evaluate(self.model)
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
@@ -263,6 +265,184 @@ class Runner:
 
         return bleu, bleu_con, val_loss
         # return bleu, val_loss
+
+    def readtestdata(self):
+        Complete_data = []
+        with open('./LabeledTestData.txt', 'r') as wh:
+            index = wh.readline()
+            index = int(index.strip())
+            for ind , line in enumerate(wh.readlines()):
+                title, raw_content, change_content, raw_context, Dprime = line.strip().split('\t')
+                q_ind = self.textData.title2index[title]
+                A_ids = self.textData.TurnWordID(raw_content.split())
+                Ap_ids = self.textData.TurnWordID(change_content.split())
+                D_ids = self.textData.TurnWordID(raw_context.split())
+                Dp_ids = self.textData.TurnWordID(Dprime.split())
+
+                Complete_data.append([q_ind, A_ids, Ap_ids, D_ids, Dp_ids, Dprime])
+            wh.close()
+        dataset_size = len(Complete_data)
+        batches = []
+
+        def _createBatch(samples):
+            """Create a single batch from the list of sample. The batch size is automatically defined by the number of
+            samples given.
+            The inputs should already be inverted. The target should already have <go> and <eos>
+            Warning: This function should not make direct calls to args['batchSize'] !!!
+            Args:
+                samples (list<Obj>): a list of samples, each sample being on the form [input, target]
+            Return:
+                Batch: a batch object en
+            """
+
+            batch = Batch()
+            batchSize = len(samples)
+
+            sentence_num_max = 0
+            # Create the batch tensor
+            for i in range(batchSize):
+                # Unpack the sample
+                q_ind, A_ids, Ap_ids, D_ids, Dp_ids, Dprime = samples[i]  # context_tokens：   senlen * wordnum;  context_sen_num:
+                # context_tokens, q_tokens, option,  option_raw, sentence_info, all_answer_text = samples[i]
+
+                context_tokens = D_ids
+
+                if len(context_tokens) > args['maxLengthEnco']:
+                    context_tokens = context_tokens[:args['maxLengthEnco']]
+
+                batch.contextSeqs.append(context_tokens)
+                batch.context_lens.append(len(batch.contextSeqs[i]))
+                # batch.questionSeqs.append(q_tokens)
+                # batch.question_lens.append(len(batch.questionSeqs[i]))
+                batch.field.append(q_ind)
+                batch.answerSeqs.append(A_ids)
+                batch.ans_lens.append(A_ids)
+
+                batch.changed_answerSeqs.append(Ap_ids)
+                batch.raw_changed_context.append(Dprime)
+
+            maxlen_con = max(batch.context_lens)
+            # maxlen_q = max(batch.question_lens)
+            maxlen_ans = max(batch.ans_lens)
+            maxlen_ans_prime = max(batch.changed_answerSeqs)
+            # args['chargenum'] + 1  padding
+
+            for i in range(batchSize):
+                context_sens = samples[i][3]
+                context_sen_num = samples[i][4]
+                # print(context_sen_num, end=' ')
+                batch.ContextDecoderSeqs.append(
+                    [self.word2index['START_TOKEN']] + batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                            maxlen_con - len(batch.contextSeqs[i])))
+                batch.ContextTargetSeqs.append(
+                    batch.contextSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                            maxlen_con - len(batch.contextSeqs[i])))
+                # batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                #             maxlen_con - len(batch.contextSeqs[i]))
+                batch.contextSeqs[i] = batch.ContextTargetSeqs[i]  # D
+                batch.decoderSeqs.append(
+                    [self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                            maxlen_ans - len(batch.answerSeqs[i])))
+                batch.targetSeqs.append(
+                    batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                            maxlen_ans - len(batch.answerSeqs[i])))
+                batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_ans - len(batch.answerSeqs[i]))
+                batch.changed_answerSeqs[i] = batch.changed_answerSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_ans_prime - len(batch.changed_answerSeqs[i]))
+                # batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
+                # batch.context_mask.append(np.zeros([sentence_num_max]))
+                # start = 0
+                # end = 0
+                # for ind, sen in enumerate(context_sens):
+                #     sen_l = len(sen)
+                #     end += sen_l
+                #     batch.sentence_mask[i][ind, start:end] = 1
+                #     start = end
+                # batch.context_mask[i][:context_sen_num] = 1
+            # print()
+
+            return batch
+        def genNextSamples():
+            """ Generator over the mini-batch training samples
+            """
+            for i in range(0, dataset_size, args['batchSize']):
+                yield Complete_data[i:min(i + args['batchSize'], dataset_size)]
+
+        # TODO: Should replace that by generator (better: by tf.queue)
+
+        for index, samples in enumerate(genNextSamples()):
+            # print([self.index2word[id] for id in samples[5][0]], samples[5][2])
+            batch = self._createBatch(samples)
+            batches.append(batch)
+
+        return batches
+
+    def Test(self, model):
+        model.eval()
+        batches = self.readtestdata()
+        val_loss = []
+        pred_ans = []  # cnn
+        pred_context = []  # cnn
+        gold_ans = []
+        gold_context = []
+        # val_accuracy = []/
+        # For each batch in our validation set...
+        pppt = False
+        for batch in batches:
+            # Compute logits
+            with torch.no_grad():
+                x=Batch()
+                x.contextSeqs = batch.contextSeqs
+                x.field = batch.field
+                x.answerSeqs = batch.changed_answerSeqs
+                ## no use just place holder
+                x.decoderSeqs = batch.decoderSeqs
+                x.targetSeqs = batch.targetSeqs
+                x.ContextDecoderSeqs = batch.ContextDecoderSeqs
+                x.ContextTargetSeqs = batch.ContextTargetSeqs
+
+                loss, de_words_answer, de_words_context, sampled_words = model.predict(x)
+                # loss, de_words_answer = model.predict(batch)
+                pred_ans.extend(de_words_answer)
+                pred_context.extend(de_words_context)
+                if not pppt:
+
+                    pppt = True
+                    pind = np.random.choice(len(batch.contextSeqs))
+                    print(self.textData.index2title[batch.field[pind]])
+                    for w, choice in zip(batch.contextSeqs[pind], sampled_words[pind]):
+                        if choice == 1:
+                            print('<', self.textData.index2word[w], '>', end=' ')
+                        else:
+                            print(self.textData.index2word[w], end=' ')
+                    print()
+                    print(de_words_answer[pind])
+                    print(de_words_context[pind])
+                    print()
+
+            gold_ans.extend([[r] for r in batch.raw_ans])
+            gold_context.extend([[r] for r in batch.raw_changed_context])
+            # print(preds, batch.label)
+
+            # Calculate the accuracy rate
+            # accuracy = (preds.cpu() == torch.LongTensor(batch.label)).numpy().mean() * 100
+            # val_accuracy.append(accuracy)
+
+            val_loss.append(loss.item())
+
+        # for i in range(10):
+        #     print(gold_ans[i][0], pred_ans[i])
+        bleu = -1
+        bleu = self.get_F(gold_ans, pred_ans)
+        bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
+        # Compute the average accuracy and loss over the validation set.
+        val_loss = np.mean(val_loss)
+
+        return bleu, bleu_con, val_loss
+
+
+
 
     def pretrain_enc_dec(self, batches):
         optimizer = optim.Adam(self.model.get_pretrain_parameters(), lr=1e-3, eps=1e-3)  # , amsgrad=True)

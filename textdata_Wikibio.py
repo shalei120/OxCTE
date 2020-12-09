@@ -51,6 +51,9 @@ class Batch:
         self.core_sen_ids = []
         self.all_answers = []
 
+        self.changed_answerSeqs = []
+        self.raw_changed_context = []
+
 class TextData:
     """Dataset class
     Warning: No vocabulary limit
@@ -419,34 +422,41 @@ class TextData:
                         # field = field.replace('_','')
                         if field == self.title2index['UNK'] or content_len > 10 or unk_ind in content:
                             continue
+
+
                         contain_values = True
-                        content_wordnum = 0
                         target_words = set(self.link(target))
                         indexes = []
-                        for w in content:
-                            if w not in target_words:
-                                contain_values = False
-                                break
 
-                        if contain_values:  
-                            str_content = ' '.join([str(c) for c in content])
-                            str_target = ' '.join([str(c) for c in self.link(target)])
-                            if str_content not in str_target:
-                                pass
+                        if self.datadump_filename == 'AnnotationTmpData':
+                            for w in content:
+                                if w not in target_words:
+                                    contain_values = False
+                                    break
+
+                            if contain_values:
+                                str_content = ' '.join([str(c) for c in content])
+                                str_target = ' '.join([str(c) for c in self.link(target)])
+                                if str_content not in str_target:
+                                    pass
+                                else:
+                                    continue
                             else:
                                 continue
 
-                        else:
-                            continue
-                            # if self.index2word[w][0].isalpha():
-                            #     content_wordnum += 1
-                            #     if w in target_words:
-                            #         contain_values += 1
-                        # if content_wordnum == 0:
-                        #     continue
-                        #
-                        # if contain_values *1.0 / content_wordnum < 0.3 or contain_values*1.0 / content_wordnum >0.9:
-                        #     continue
+                        elif self.datadump_filename == 'Wikibio':
+                            contain_values = 0
+                            content_wordnum = 0
+                            for w in content:
+                                if self.index2word[w][0].isalpha():
+                                    content_wordnum += 1
+                                    if w in target_words:
+                                        contain_values += 1
+                            if content_wordnum == 0:
+                                continue
+
+                            if contain_values *1.0 / content_wordnum < 0.3 or contain_values*1.0 / content_wordnum >0.9:
+                                continue
 
                         res.append((field, content, content_len, target, target_len, raw_content, raw_target))
 
