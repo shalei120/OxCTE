@@ -71,7 +71,7 @@ class LSTM_CTE_Model(nn.Module):
         self.M = Parameter(torch.randn([args['embeddingSize'], args['hiddenSize']*2,2]))
 
         self.shrink_copy_input= nn.Linear(args['hiddenSize']*2, args['hiddenSize'], bias=False)
-        # self.c_att_layer = nn.Linear(args['hiddenSize'], args['hiddenSize'], bias=False)
+        self.emb2hid = nn.Linear(args['embeddingSize'], args['hiddenSize'], bias=False)
         # self.z_logit2prob = nn.Sequential(
         #     nn.Linear(args['hiddenSize'], 2)
         # )
@@ -155,6 +155,7 @@ class LSTM_CTE_Model(nn.Module):
         # print(' context_tar: ', context_tar[0])
 
         mask = torch.sign(context_inputs).float()
+        mask_pure_answer = torch.sign(pure_answer).float()
 
         batch_size = context_inputs.size()[0]
         seq_len = context_inputs.size()[1]
@@ -185,7 +186,7 @@ class LSTM_CTE_Model(nn.Module):
             sampled_seq = (z_prob > 0.5).float() *  mask.unsqueeze(2)
 
         answer_only_sequence = context_inputs_embs * sampled_seq[:,:,1].unsqueeze(2)
-        no_answer_sequence = context_inputs_embs * sampled_seq[:,:,0].unsqueeze(2).detach()
+        no_answer_sequence = context_inputs_embs * sampled_seq[:,:,0].unsqueeze(2)#.detach()
 
         answer_only_logp_z0 = torch.log(z_prob[:, :, 0].clamp(eps,1.0))  # [B,T], log P(z = 0 | x)
         answer_only_logp_z1 = torch.log(z_prob[:, :, 1].clamp(eps,1.0))  # [B,T], log P(z = 1 | x)
@@ -224,7 +225,10 @@ class LSTM_CTE_Model(nn.Module):
         pure_answer_output = torch.mean(pure_answer_embs, dim = 1, keepdim=True)
         # no_ans_plus_pureans_state = (torch.cat([no_answer_state[0], pure_answer_state[0]], dim = 2),
         #                              torch.cat([no_answer_state[1], pure_answer_state[1]], dim=2))
-        context_de_output = self.decoder_no_answer(no_answer_state, context_dec, context_tar, cat=pure_answer_output, enc_embs = en_context_output_shrink, enc_mask=mask, enc_onehot = enc_onehot)
+        en_context_output_plus = torch.cat([en_context_output_shrink, self.emb2hid(pure_answer_embs)], dim = 1)
+        mask_plus = torch.cat([mask, mask_pure_answer], dim = 1)
+        enc_onehot_plus = F.one_hot(torch.cat([context_inputs, pure_answer], dim = 1), num_classes=args['vocabularySize'])
+        context_de_output = self.decoder_no_answer(no_answer_state, context_dec, context_tar, cat=pure_answer_output, enc_embs = en_context_output_plus, enc_mask=mask_plus, enc_onehot = enc_onehot_plus)
         # context_de_output = self.decoder_no_answer(en_context_state, context_dec, context_tar)#, cat=torch.max(pure_answer_output, dim = 1, keepdim=True)[0])
         context_recon_loss = self.NLLloss(torch.transpose(context_de_output, 1, 2), context_tar)
         # context_mask = torch.sign(context_tar.float())
@@ -232,7 +236,7 @@ class LSTM_CTE_Model(nn.Module):
         context_recon_loss_mean = context_recon_loss#torch.mean(context_recon_loss, dim = 1)
 
 
-        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.8))
+        I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.5))
         # I_x_z = torch.abs(torch.mean(torch.log(z_prob[:, :, 1]+eps), 1) -np.log(0.1))
 
         loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + cross_sim #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
@@ -241,23 +245,23 @@ class LSTM_CTE_Model(nn.Module):
         self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
         # self.tt = [context_recon_loss_mean.mean(),]
         # self.tt = [answer_recon_loss_mean.mean() , (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
-        return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output_shrink, mask,  enc_onehot
+        return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output_shrink, mask,  enc_onehot, en_context_output_plus, mask_plus, enc_onehot_plus
         # return loss, answer_only_state,  (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()
         # return loss, None, en_context_state, pure_answer_output, 0
 
 
 
     def forward(self, x):
-        loss, _,_,_, closs, _,_,_,_ = self.build(x, mode= 'train')
+        loss, _,_,_, closs, _,_,_,_ ,_,_,_= self.build(x, mode= 'train')
         return loss, closs
 
     def predict(self, x):
         # loss, answer_only_state, no_answer_state, pure_answer_output,_ = self.build(x)
-        loss, answer_only_state, no_answer_state, pure_answer_output, _, sampled_words, en_context_output, mask,  enc_onehot = self.build(x, mode= 'train')
+        loss, answer_only_state, no_answer_state, pure_answer_output, _, sampled_words, en_context_output, mask,  enc_onehot, en_context_output_plus, mask_plus, enc_onehot_plus = self.build(x, mode= 'train')
         de_words_answer = []
         if answer_only_state is not None:
             de_words_answer = self.decoder_answer.generate(answer_only_state, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
-        de_words_context = self.decoder_no_answer.generate(no_answer_state, cat = pure_answer_output, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
+        de_words_context = self.decoder_no_answer.generate(no_answer_state, cat = pure_answer_output, enc_embs = en_context_output_plus, enc_mask=mask_plus, enc_onehot = enc_onehot_plus)
 
         return loss, de_words_answer, de_words_context, sampled_words
 

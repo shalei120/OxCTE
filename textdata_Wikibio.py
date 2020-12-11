@@ -53,6 +53,7 @@ class Batch:
 
         self.changed_answerSeqs = []
         self.raw_changed_context = []
+        self.rmask = []
 
 class TextData:
     """Dataset class
