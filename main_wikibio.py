@@ -75,7 +75,7 @@ class Runner:
         args['datasetsize'] = -1
 
         self.textData = td_wiki(glove=False)
-        args['batchSize'] = 32
+        args['batchSize'] = 16
         # args['model_arch'] = 'lstm_cte'
         self.start_token = self.textData.word2index['START_TOKEN']
         self.end_token = self.textData.word2index['END_TOKEN']
@@ -125,6 +125,7 @@ class Runner:
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
         # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+        test_bleu, bleu_con_test, test_loss = self.Test(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -187,14 +188,14 @@ class Runner:
             # After the completion of each training epoch, measure the model's performance
             # on our validation set.
             bleu_con = 0
-            val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-            self.Test(self.model)
+            # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+            test_bleu, bleu_con_test, test_loss, dbleu = self.Test(self.model)
             # val_bleu, val_loss = self.evaluate(self.model)
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
-            print(
-                f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {'-':^10}")
+            # print( f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {'-':^10}")
+            print(test_bleu, bleu_con_test, test_loss, dbleu)
             print("-" * 70)
             print("\n")
 
@@ -267,22 +268,7 @@ class Runner:
         # return bleu, val_loss
 
     def readtestdata(self):
-        Complete_data = []
-        with open('./LabeledTestData.txt', 'r') as wh:
-            index = wh.readline()
-            index = int(index.strip())
-            for ind , line in enumerate(wh.readlines()):
-                title, raw_content, change_content, raw_context, Dprime = line.strip().split('\t')
-                q_ind = self.textData.title2index[title]
-                A_ids = self.textData.TurnWordID(raw_content.split())
-                Ap_ids = self.textData.TurnWordID(change_content.split())
-                D_ids = self.textData.TurnWordID(raw_context.split())
-                Dp_ids = self.textData.TurnWordID(Dprime.split())
 
-                Complete_data.append([q_ind, A_ids, Ap_ids, D_ids, Dp_ids, Dprime])
-            wh.close()
-        dataset_size = len(Complete_data)
-        batches = []
 
         def _createBatch(samples):
             """Create a single batch from the list of sample. The batch size is automatically defined by the number of
@@ -302,7 +288,7 @@ class Runner:
             # Create the batch tensor
             for i in range(batchSize):
                 # Unpack the sample
-                q_ind, A_ids, Ap_ids, D_ids, Dp_ids, Dprime = samples[i]  # context_tokens：   senlen * wordnum;  context_sen_num:
+                q_ind, A_ids, Ap_ids, D_ids, Dp_ids, D, Dprime , rmask = samples[i]  # context_tokens：   senlen * wordnum;  context_sen_num:
                 # context_tokens, q_tokens, option,  option_raw, sentence_info, all_answer_text = samples[i]
 
                 context_tokens = D_ids
@@ -316,15 +302,17 @@ class Runner:
                 # batch.question_lens.append(len(batch.questionSeqs[i]))
                 batch.field.append(q_ind)
                 batch.answerSeqs.append(A_ids)
-                batch.ans_lens.append(A_ids)
+                batch.ans_lens.append(len(A_ids))
 
                 batch.changed_answerSeqs.append(Ap_ids)
                 batch.raw_changed_context.append(Dprime)
+                batch.raw_context.append(D)
+                batch.rmask.append(rmask)
 
             maxlen_con = max(batch.context_lens)
             # maxlen_q = max(batch.question_lens)
             maxlen_ans = max(batch.ans_lens)
-            maxlen_ans_prime = max(batch.changed_answerSeqs)
+            maxlen_ans_prime = max([len(b) for b in batch.changed_answerSeqs])
             # args['chargenum'] + 1  padding
 
             for i in range(batchSize):
@@ -332,23 +320,23 @@ class Runner:
                 context_sen_num = samples[i][4]
                 # print(context_sen_num, end=' ')
                 batch.ContextDecoderSeqs.append(
-                    [self.word2index['START_TOKEN']] + batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                    [self.textData.word2index['START_TOKEN']] + batch.contextSeqs[i] + [self.textData.word2index['PAD']] * (
                             maxlen_con - len(batch.contextSeqs[i])))
                 batch.ContextTargetSeqs.append(
-                    batch.contextSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                    batch.contextSeqs[i] + [self.textData.word2index['END_TOKEN']] + [self.textData.word2index['PAD']] * (
                             maxlen_con - len(batch.contextSeqs[i])))
                 # batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
                 #             maxlen_con - len(batch.contextSeqs[i]))
                 batch.contextSeqs[i] = batch.ContextTargetSeqs[i]  # D
                 batch.decoderSeqs.append(
-                    [self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                    [self.textData.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.textData.word2index['PAD']] * (
                             maxlen_ans - len(batch.answerSeqs[i])))
                 batch.targetSeqs.append(
-                    batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
+                    batch.answerSeqs[i] + [self.textData.word2index['END_TOKEN']] + [self.textData.word2index['PAD']] * (
                             maxlen_ans - len(batch.answerSeqs[i])))
-                batch.answerSeqs[i] = batch.answerSeqs[i] + [self.word2index['PAD']] * (
+                batch.answerSeqs[i] = batch.answerSeqs[i] + [self.textData.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i]))
-                batch.changed_answerSeqs[i] = batch.changed_answerSeqs[i] + [self.word2index['PAD']] * (
+                batch.changed_answerSeqs[i] = batch.changed_answerSeqs[i] + [self.textData.word2index['PAD']] * (
                         maxlen_ans_prime - len(batch.changed_answerSeqs[i]))
                 # batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
                 # batch.context_mask.append(np.zeros([sentence_num_max]))
@@ -371,12 +359,87 @@ class Runner:
 
         # TODO: Should replace that by generator (better: by tf.queue)
 
-        for index, samples in enumerate(genNextSamples()):
-            # print([self.index2word[id] for id in samples[5][0]], samples[5][2])
-            batch = self._createBatch(samples)
-            batches.append(batch)
+        if not hasattr(self, 'LTestData_batches'):
+            Complete_data = []
+            with open('./LabeledTestData.txt', 'r') as wh:
+                index = wh.readline()
+                index = int(index.strip())
+                # print(index)
+                for ind , line in enumerate(wh.readlines()):
+                    # print(line)
+                    title, raw_content, change_content, raw_context, Dprime = line.strip().split('\t')
+                    q_ind = self.textData.title2index[title]
+                    A_ids = self.textData.TurnWordID(raw_content.split())
+                    Ap_ids = self.textData.TurnWordID(change_content.split())
+                    D_ids = self.textData.TurnWordID(raw_context.split())
+                    Dp_ids = self.textData.TurnWordID(Dprime.split())
+                    rmask = self.dBLEU_rmask(raw_context, Dprime)
+                    # print('1: ', raw_context)
+                    # print('2: ', Dprime)
+                    # print('3: ', rmask)
+                    Complete_data.append([q_ind, A_ids, Ap_ids, D_ids, Dp_ids, raw_context, Dprime, rmask])
+                wh.close()
+            dataset_size = len(Complete_data)
+            self.LTestData_batches = []
+            for index, samples in enumerate(genNextSamples()):
+                # print([self.index2word[id] for id in samples[5][0]], samples[5][2])
+                batch = _createBatch(samples)
+                self.LTestData_batches.append(batch)
 
-        return batches
+        return self.LTestData_batches
+
+    def dBLEU_rmask(self, D, Dp):
+        Y = D = D.split() # n
+        X = Dp = Dp.split() # m
+        n = len(D)
+        m = len(Dp)
+
+        L = [[0 for x in range(n + 1)] for x in range(m + 1)]  # m+1 n+1
+
+        # Following steps build L[m+1][n+1] in bottom up fashion. Note
+        # that L[i][j] contains length of LCS of X[0..i-1] and Y[0..j-1]
+        for i in range(m + 1):
+            for j in range(n + 1):
+                if i == 0 or j == 0:
+                    L[i][j] = 0
+                elif X[i - 1] == Y[j - 1]:
+                    L[i][j] = L[i - 1][j - 1] + 1
+                else:
+                    L[i][j] = max(L[i - 1][j], L[i][j - 1])
+
+                    # Following code is used to print LCS
+        index = L[m][n]
+
+        Label_mask = [1 for x in range(m + 1)]
+        # Create a character array to store the lcs string
+        # lcs = [""] * (index + 1)
+        # lcs[index] = ""
+
+        # Start from the right-most-bottom-most corner and
+        # one by one store characters in lcs[]
+        i = m
+        j = n
+        while i > 0 and j > 0:
+
+            # If current character in X[] and Y are same, then
+            # current character is part of LCS
+            if X[i - 1] == Y[j - 1]:
+                # lcs[index - 1] = X[i - 1]
+                Label_mask[i-1] = 0
+                i -= 1
+                j -= 1
+                # index -= 1
+
+            # If not same, then find the larger of two and
+            # go in the direction of larger value
+            elif L[i - 1][j] > L[i][j - 1]:
+                i -= 1
+            else:
+                j -= 1
+
+        rmask = [(w if lm == 1 else '[W]') for lm, w in zip(Label_mask, Dp)]
+        return rmask
+
 
     def Test(self, model):
         model.eval()
@@ -386,9 +449,11 @@ class Runner:
         pred_context = []  # cnn
         gold_ans = []
         gold_context = []
+        rmask_context = []
         # val_accuracy = []/
         # For each batch in our validation set...
         pppt = False
+        record_file = open(args['rootDir'] + 'record_test.txt', 'w')
         for batch in batches:
             # Compute logits
             with torch.no_grad():
@@ -396,6 +461,7 @@ class Runner:
                 x.contextSeqs = batch.contextSeqs
                 x.field = batch.field
                 x.answerSeqs = batch.changed_answerSeqs
+                # x.answerSeqs = batch.answerSeqs
                 ## no use just place holder
                 x.decoderSeqs = batch.decoderSeqs
                 x.targetSeqs = batch.targetSeqs
@@ -411,6 +477,7 @@ class Runner:
                     pppt = True
                     pind = np.random.choice(len(batch.contextSeqs))
                     print(self.textData.index2title[batch.field[pind]])
+                    print('A^prime: ', [self.textData.index2word[w] for w in batch.changed_answerSeqs[pind]])
                     for w, choice in zip(batch.contextSeqs[pind], sampled_words[pind]):
                         if choice == 1:
                             print('<', self.textData.index2word[w], '>', end=' ')
@@ -421,8 +488,27 @@ class Runner:
                     print(de_words_context[pind])
                     print()
 
-            gold_ans.extend([[r] for r in batch.raw_ans])
-            gold_context.extend([[r] for r in batch.raw_changed_context])
+                for pind in range(len(batch.contextSeqs)):
+                    single_bleu= nltk.translate.bleu_score.sentence_bleu([batch.raw_context[pind].split()], de_words_context[pind])
+                    record_file.write(str(pind)+ ' BLEU: '+str(single_bleu)+ '\n')
+                    record_file.write(self.textData.index2title[batch.field[pind]] + '\n')
+                    record_file.write('A^prime: '+ ' '.join([self.textData.index2word[w] for w in batch.changed_answerSeqs[pind]]) + '\n')
+
+                    for w, choice in zip(batch.contextSeqs[pind], sampled_words[pind]):
+                        if choice == 1:
+                            record_file.write('<'+ self.textData.index2word[w]+ '> ')
+                        else:
+                            record_file.write(self.textData.index2word[w] + ' ')
+                    record_file.write('\n Raw context: ' + batch.raw_context[pind] + '\n')
+                    record_file.write( ' '.join(de_words_answer[pind]) + '\n')
+                    record_file.write(' '.join(de_words_context[pind]) + '\n\n')
+
+
+
+            gold_ans.extend([[r.split()] for r in batch.raw_ans])
+            gold_context.extend([[r.split()] for r in batch.raw_changed_context])
+            rmask_context.extend([[r] for r in batch.rmask])
+            # gold_context.extend([[r.split()] for r in batch.raw_context])
             # print(preds, batch.label)
 
             # Calculate the accuracy rate
@@ -430,16 +516,16 @@ class Runner:
             # val_accuracy.append(accuracy)
 
             val_loss.append(loss.item())
-
         # for i in range(10):
         #     print(gold_ans[i][0], pred_ans[i])
         bleu = -1
         bleu = self.get_F(gold_ans, pred_ans)
         bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
+        dBLEU = self.get_corpus_BLEU(rmask_context, pred_context)
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
-        return bleu, bleu_con, val_loss
+        return bleu, bleu_con, val_loss, dBLEU
 
 
 
