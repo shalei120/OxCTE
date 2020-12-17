@@ -27,6 +27,7 @@ import copy
 from Hyperparameters import args
 from LSTM import LSTM_Model
 from LSTM_CTE_Wikibio import LSTM_CTE_Model
+from LSTM_CTE_Wikibio_BO import LSTM_CTE_Model_with_action
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
@@ -102,6 +103,17 @@ class Runner:
             # gpu_tracker.track()
             print(sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True))
             self.train(gpu_tracker=None)
+        elif args['model_arch'] == 'lstm_cte_bo':
+            print('Using LSTM CTE with action model.')
+            # gpu_tracker.track()
+            self.model = LSTM_CTE_Model_with_action(self.textData.word2index, self.textData.index2word,
+                                        embs = torch.FloatTensor(self.textData.index2vector),
+                                        title_emb =  torch.FloatTensor(self.textData.index2titlevector))
+            # gpu_tracker.track()
+            self.model = self.model.to(args['device'])
+            # gpu_tracker.track()
+            print(sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True))
+            self.train(gpu_tracker=None)
 
     def train(self, gpu_tracker, print_every=1000, plot_every=10, learning_rate=0.001):
         start = time.time()
@@ -125,7 +137,7 @@ class Runner:
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
         # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-        test_bleu, bleu_con_test, test_loss = self.Test(self.model)
+        # test_bleu, bleu_con_test, test_loss = self.Test(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -189,13 +201,13 @@ class Runner:
             # on our validation set.
             bleu_con = 0
             # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-            test_bleu, bleu_con_test, test_loss, dbleu = self.Test(self.model)
+            test_bleu, bleu_con_test, test_loss, dbleu,compare_BLEU = self.Test(self.model)
             # val_bleu, val_loss = self.evaluate(self.model)
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
             # print( f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {'-':^10}")
-            print(test_bleu, bleu_con_test, test_loss, dbleu)
+            print(test_bleu, bleu_con_test, test_loss, dbleu, compare_BLEU)
             print("-" * 70)
             print("\n")
 
@@ -327,7 +339,8 @@ class Runner:
                             maxlen_con - len(batch.contextSeqs[i])))
                 # batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
                 #             maxlen_con - len(batch.contextSeqs[i]))
-                batch.contextSeqs[i] = batch.ContextTargetSeqs[i]  # D
+                batch.contextSeqs[i] = batch.contextSeqs[i] + [self.textData.word2index['PAD']] * (
+                            maxlen_con - len(batch.contextSeqs[i])) # D
                 batch.decoderSeqs.append(
                     [self.textData.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.textData.word2index['PAD']] * (
                             maxlen_ans - len(batch.answerSeqs[i])))
@@ -338,17 +351,7 @@ class Runner:
                         maxlen_ans - len(batch.answerSeqs[i]))
                 batch.changed_answerSeqs[i] = batch.changed_answerSeqs[i] + [self.textData.word2index['PAD']] * (
                         maxlen_ans_prime - len(batch.changed_answerSeqs[i]))
-                # batch.sentence_mask.append(np.zeros([sentence_num_max, maxlen_con]))
-                # batch.context_mask.append(np.zeros([sentence_num_max]))
-                # start = 0
-                # end = 0
-                # for ind, sen in enumerate(context_sens):
-                #     sen_l = len(sen)
-                #     end += sen_l
-                #     batch.sentence_mask[i][ind, start:end] = 1
-                #     start = end
-                # batch.context_mask[i][:context_sen_num] = 1
-            # print()
+
 
             return batch
         def genNextSamples():
@@ -522,10 +525,11 @@ class Runner:
         bleu = self.get_F(gold_ans, pred_ans)
         bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
         dBLEU = self.get_corpus_BLEU(rmask_context, pred_context)
+        compare_BLEU = self.get_corpus_BLEU(rmask_context, [s[0] for s in gold_context])
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
-        return bleu, bleu_con, val_loss, dBLEU
+        return bleu, bleu_con, val_loss, dBLEU, compare_BLEU
 
 
 

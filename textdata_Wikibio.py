@@ -35,15 +35,16 @@ class Batch:
 
         self.contextSeqs = []
         self.context_lens = []
-        # self.questionSeqs = []
-        # self.question_lens = []
+
+
+        self.ans_contextSeqs = []
+
         self.field = []
         self.answerSeqs = []
         self.ans_lens = []
         self.context_mask = []
         self.sentence_mask = []
-        # self.starts = []
-        # self.ends = []
+        self.ans_con_mask = []
 
 
         self.raw_ans = []
@@ -142,6 +143,7 @@ class TextData:
         # maxlen_q = max(batch.question_lens)
         maxlen_ans= max(batch.ans_lens)
         # args['chargenum'] + 1  padding
+        maxlen_ans_con = max([a+b for a,b in zip(batch.ans_lens, batch.context_lens)])
 
         for i in range(batchSize):
             context_sens = samples[i][3]
@@ -153,7 +155,12 @@ class TextData:
                         maxlen_con - len(batch.contextSeqs[i])))
             # batch.contextSeqs[i] = batch.contextSeqs[i] + [self.word2index['PAD']] * (
             #             maxlen_con - len(batch.contextSeqs[i]))
-            batch.contextSeqs[i] = batch.ContextTargetSeqs[i]
+            # batch.ans_contextSeqs.append(batch.answerSeqs[i] + [self.word2index['END_ANS']] + batch.contextSeqs[i] + [self.word2index['PAD']] * (
+            #             maxlen_ans_con - len(batch.contextSeqs[i])-len(batch.answerSeqs[i])))
+            # batch.ans_con_mask.append([0]*len(batch.answerSeqs[i]+1) + [1]*len(batch.contextSeqs[i]) + [0]* (
+            #             maxlen_ans_con - len(batch.contextSeqs[i])-len(batch.answerSeqs[i])))
+            batch.contextSeqs[i]=batch.contextSeqs[i] + [self.word2index['PAD']] * (
+                        maxlen_con - len(batch.contextSeqs[i]))
             batch.decoderSeqs.append([self.word2index['START_TOKEN']] + batch.answerSeqs[i] + [self.word2index['PAD']] * (
                         maxlen_ans - len(batch.answerSeqs[i])))
             batch.targetSeqs.append(batch.answerSeqs[i] + [self.word2index['END_TOKEN']] + [self.word2index['PAD']] * (
