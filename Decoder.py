@@ -239,9 +239,9 @@ class Decoder(nn.Module):
 
         decoded_words = []
         decoder_input_id = torch.tensor([[self.word2index['START_TOKEN'] for _ in range(self.batch_size)]], device=args['device'])  # SOS 1*batch
-        decoder_pattern_sequence = decoder_pattern_sequence
-        decoder_pattern_sequence_ids =decoder_pattern_sequence_ids
-        decoder_mask_sequence =decoder_mask_sequence
+        decoder_pattern_sequence = decoder_pattern_sequence.long()
+        decoder_pattern_sequence_ids =decoder_pattern_sequence_ids.long()
+        decoder_mask_sequence =decoder_mask_sequence.long()
         decoder_input = self.embedding(decoder_input_id).contiguous().to(args['device']) #1 batch emb
         # print('decoder input: ', decoder_input.shape)
         decoder_id_res = []
@@ -251,12 +251,13 @@ class Decoder(nn.Module):
         #     state[b] = 1
         # else:
         #     state[b] = 0  # enc
-        di = torch.LongTensor([0] * self.batch_size)
+        di = torch.LongTensor([0 for _ in range(self.batch_size)])
         state = 1 - decoder_mask_sequence[:,0]
 
         # for di in range(self.max_length):
-        while any((di <= self.max_length) * (di < decoder_pattern_sequence_ids.size()[1])):
-
+        count = torch.LongTensor([0 for _ in range(self.batch_size)])
+        while any((di <= self.max_length) * (di < decoder_pattern_sequence_ids.size()[1]-1)):
+            # print(di,decoder_pattern_sequence_ids.size()[1], state)
             if cat is not None:
                 cat1 = cat.transpose(0,1)
                 # print(decoder_input.size(), cat.size())
@@ -294,9 +295,11 @@ class Decoder(nn.Module):
 
             decoder_input_id = topi[:,:,0].detach()
             # print(decoder_pattern_sequence_ids.size(), state.size(), decoder_input_id.size())
-            gather_index = torch.zeros(size = decoder_pattern_sequence_ids.size(), dtype=torch.long)
+            gather_index = torch.zeros(size = decoder_pattern_sequence_ids.size(), dtype=torch.long).to(args['device'])
             gather_index[:,0]= di
-            select_pattern_word = decoder_pattern_sequence_ids.gather(dim = 1, index = torch.LongTensor(gather_index))[:,0]
+            select_pattern_word = decoder_pattern_sequence_ids.gather(dim = 1, index = gather_index)[:,0]
+            print(select_pattern_word, state, decoder_input_id, decoder_id_res)
+            print()
             decoder_id_res.append(select_pattern_word * (1-state) + decoder_input_id * state)
             last_output = self.embedding(decoder_input_id).to(args['device'])
 
@@ -321,20 +324,31 @@ class Decoder(nn.Module):
                                     state[b] = 1
                                     while decoder_mask_sequence[b, di[b]] == 0:
                                         di[b] += 1
+                            else:
+                                print(decoder_mask_sequence[b,:], 1 - decoder_mask_sequence[:,0])
+
+                                print('error')
 
                 elif state[b] == 1:
+                    if di[b] ==0 and decoder_mask_sequence[b, di[b]] == 0:
+                        while decoder_mask_sequence[b, di[b]] == 0:
+                            di[b] += 1
+                    count[b] += 1
                     decoder_input[:,b,:] = last_output[:,b,:]
                     if action[:,b] == 1:
                         state[b] = 0
+                    if count[b] > 4:
+                        count[b] = 0
+                        state[b]=0
 
         decoder_id_res = torch.cat(decoder_id_res, dim = 0)  #seqlen * batch
-        print(decoder_id_res.size())
+        # print(decoder_id_res.size())
 
         for b in range(self.batch_size):
             decode_id_list = list(decoder_id_res[:,b])
             if self.word2index['END_TOKEN'] in decode_id_list:
                 decode_id_list = decode_id_list[:decode_id_list.index(self.word2index['END_TOKEN'])] if decode_id_list[0] != self.word2index['END_TOKEN'] else [self.word2index['END_TOKEN']]
-            print(decode_id_list)
+            # print(decode_id_list)
             decoded_words.append([self.index2word[id] for id in decode_id_list])
         return decoded_words
 
