@@ -137,7 +137,7 @@ class Runner:
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
         # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-        # test_bleu, bleu_con_test, test_loss = self.Test(self.model)
+        test_bleu, bleu_con_test, test_loss = self.Test(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -457,7 +457,7 @@ class Runner:
         # For each batch in our validation set...
         pppt = False
         record_file = open(args['rootDir'] + 'record_test.txt', 'w')
-        for batch in batches:
+        for batch in tqdm(batches):
             # Compute logits
             with torch.no_grad():
                 x=Batch()
