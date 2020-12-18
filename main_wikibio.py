@@ -84,7 +84,7 @@ class Runner:
         args['TitleNum'] = self.textData.getTitleSize()
 
         print(self.textData.getVocabularySize())
-
+        args['model_arch'] = 'lstm_cte_bo'
         frame = inspect.currentframe()  # define a frame to track
         # gpu_tracker = MemTracker(frame, path = args['rootDir']+'/')  # define a GPU tracker
         if args['model_arch'] == 'lstm':

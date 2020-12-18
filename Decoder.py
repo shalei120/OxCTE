@@ -298,8 +298,8 @@ class Decoder(nn.Module):
             gather_index = torch.zeros(size = decoder_pattern_sequence_ids.size(), dtype=torch.long).to(args['device'])
             gather_index[:,0]= di
             select_pattern_word = decoder_pattern_sequence_ids.gather(dim = 1, index = gather_index)[:,0]
-            print(select_pattern_word, state, decoder_input_id, decoder_id_res)
-            print()
+            # print(select_pattern_word, state, decoder_input_id, decoder_id_res)
+            # print()
             decoder_id_res.append(select_pattern_word * (1-state) + decoder_input_id * state)
             last_output = self.embedding(decoder_input_id).to(args['device'])
 
