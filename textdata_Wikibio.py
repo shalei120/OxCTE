@@ -55,6 +55,7 @@ class Batch:
         self.changed_answerSeqs = []
         self.raw_changed_context = []
         self.rmask = []
+        self._help_answerSeqs = []
 
 class TextData:
     """Dataset class

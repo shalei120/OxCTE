@@ -108,7 +108,7 @@ class Runner:
             # gpu_tracker.track()
             self.model = LSTM_CTE_Model_with_action(self.textData.word2index, self.textData.index2word,
                                         embs = torch.FloatTensor(self.textData.index2vector),
-                                        title_emb =  torch.FloatTensor(self.textData.index2titlevector))
+                                        title_emb =  torch.FloatTensor(self.textData.index2titlevector), info = {'index2field': self.textData.index2title})
             # gpu_tracker.track()
             self.model = self.model.to(args['device'])
             # gpu_tracker.track()
@@ -137,7 +137,7 @@ class Runner:
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
         # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-        test_bleu, bleu_con_test, test_loss = self.Test(self.model)
+        # test_bleu, bleu_con_test, test_loss = self.Test(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
             losses = []
@@ -157,6 +157,7 @@ class Runner:
             # tra_accuracy = []
             # Put the model into the training mode
             self.model.train()
+            args['mode'] = 'runtraindata'
             for step, batch in enumerate(batches):
                 batch_counts += 1
                 optimizer.zero_grad()
@@ -445,6 +446,7 @@ class Runner:
 
 
     def Test(self, model):
+        args['mode'] = 'runtestdata'
         model.eval()
         batches = self.readtestdata()
         val_loss = []
@@ -453,6 +455,7 @@ class Runner:
         gold_ans = []
         gold_context = []
         rmask_context = []
+        origin_gold_context = []
         # val_accuracy = []/
         # For each batch in our validation set...
         pppt = False
@@ -464,7 +467,7 @@ class Runner:
                 x.contextSeqs = batch.contextSeqs
                 x.field = batch.field
                 x.answerSeqs = batch.changed_answerSeqs
-                # x.answerSeqs = batch.answerSeqs
+                x._help_answerSeqs = batch.answerSeqs
                 ## no use just place holder
                 x.decoderSeqs = batch.decoderSeqs
                 x.targetSeqs = batch.targetSeqs
@@ -511,7 +514,7 @@ class Runner:
             gold_ans.extend([[r.split()] for r in batch.raw_ans])
             gold_context.extend([[r.split()] for r in batch.raw_changed_context])
             rmask_context.extend([[r] for r in batch.rmask])
-            # gold_context.extend([[r.split()] for r in batch.raw_context])
+            origin_gold_context.extend([[r.split()] for r in batch.raw_context])
             # print(preds, batch.label)
 
             # Calculate the accuracy rate
@@ -525,11 +528,13 @@ class Runner:
         bleu = self.get_F(gold_ans, pred_ans)
         bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
         dBLEU = self.get_corpus_BLEU(rmask_context, pred_context)
-        compare_BLEU = self.get_corpus_BLEU(rmask_context, [s[0] for s in gold_context])
+        # compare_BLEU = self.get_corpus_BLEU(rmask_context, [s[0] for s in gold_context])
+        DDp_BLEU = self.get_corpus_BLEU(origin_gold_context, pred_context)
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
-        return bleu, bleu_con, val_loss, dBLEU, compare_BLEU
+
+        return bleu, bleu_con, val_loss, dBLEU, bleu_con - 0.9 * DDp_BLEU
 
 
 

@@ -94,6 +94,7 @@ class Decoder(nn.Module):
         else:
             d_in = dec_input_embed
 
+
         de_outputs, de_state, de_action = self.decoder_t(en_state, d_in, self.batch_size, enc_embs = enc_embs, enc_mask=enc_mask, enc_onehot = enc_onehot, lstm_mask = lstm_mask, with_action=True)
 
 
@@ -113,6 +114,9 @@ class Decoder(nn.Module):
     def generate_with_action(self, en_state, cat = None,  enc_embs = None, enc_mask=None, enc_onehot = None, decoder_pattern_sequence = None, decoder_pattern_sequence_ids=None, decoder_mask_sequence=None):
 
         self.batch_size = en_state[0].size()[1]
+
+        # if args['mode'] == 'runtestdata':
+        #     print([self.index2word[ind] for ind in decoder_pattern_sequence_ids[0,:]])
         de_words = self.decoder_g_with_actions(en_state, cat, enc_embs = enc_embs, enc_mask=enc_mask, enc_onehot = enc_onehot,
                                                decoder_pattern_sequence = decoder_pattern_sequence,
                                                decoder_pattern_sequence_ids=decoder_pattern_sequence_ids,
@@ -159,7 +163,7 @@ class Decoder(nn.Module):
         elif self.copy == 'semi':
             lstm_output = self.out_unit(output.view(batch_size * self.dec_len, self.hidden_dim))
             lstm_output = lstm_output.view(self.dec_len, batch_size, args['vocabularySize'])
-            lstm_output = torch.transpose(lstm_output, 0,1) * (1-lstm_mask.unsqueeze(1).float())+lstm_mask.unsqueeze(1).float() * (-1e30)
+            lstm_output = torch.transpose(lstm_output, 0,1) #* (1-lstm_mask.unsqueeze(1).float())+lstm_mask.unsqueeze(1).float() * (-1e30)
             # if (lstm_output!=lstm_output).sum() > 0:
             #     print(lstm_output, lstm_mask, output)
             #     exit()
@@ -212,6 +216,7 @@ class Decoder(nn.Module):
                 copy_logit = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
                 copy_logit = copy_logit.transpose(0, 1)
 
+
                 lstm_output = self.softmax(lstm_output)
                 copy_logit = self.softmax(copy_logit)
                 decoder_output = 0.5 * (lstm_output + copy_logit)
@@ -238,7 +243,8 @@ class Decoder(nn.Module):
         # sentence_emb = sentence_emb.view(self.batch_size,1, -1 )
 
         decoded_words = []
-        decoder_input_id = torch.tensor([[self.word2index['START_TOKEN'] for _ in range(self.batch_size)]], device=args['device'])  # SOS 1*batch
+        # decoder_input_id = torch.tensor([[self.word2index['START_TOKEN'] for _ in range(self.batch_size)]], device=args['device'])  # SOS 1*batch
+        decoder_input_id = decoder_pattern_sequence_ids[:,0].unsqueeze(0)
         decoder_pattern_sequence = decoder_pattern_sequence.long()
         decoder_pattern_sequence_ids =decoder_pattern_sequence_ids.long()
         decoder_mask_sequence =decoder_mask_sequence.long()
@@ -253,6 +259,8 @@ class Decoder(nn.Module):
         #     state[b] = 0  # enc
         di = torch.LongTensor([0 for _ in range(self.batch_size)])
         state = 1 - decoder_mask_sequence[:,0]
+
+        # overlength = torch.LongTensor([0 for _ in range(self.batch_size)])
 
         # for di in range(self.max_length):
         count = torch.LongTensor([0 for _ in range(self.batch_size)])
@@ -285,6 +293,14 @@ class Decoder(nn.Module):
                 copy_logit = torch.einsum('bts,bsv->btv', copy_logit, enc_onehot.float())
                 copy_logit = copy_logit.transpose(0, 1)
 
+
+                # if args['mode'] == 'runtestdata':
+                #     maxindex = torch.argmax(copy_logit, dim=2)
+                    # print(maxindex.size())
+                    # print([self.index2word[ind] for ind in maxindex.squeeze()])
+                    # exit()
+
+
                 lstm_output = self.softmax(lstm_output)
                 copy_logit = self.softmax(copy_logit)
                 decoder_output = 0.5 * (lstm_output + copy_logit)
@@ -310,36 +326,44 @@ class Decoder(nn.Module):
 
             for b in range(self.batch_size):
                 # print(decoder_input.size(), decoder_pattern_sequence.size(), last_output.size(), action.size())
+
                 if state[b] == 0:
-                    # print(decoder_input[:,b,:].size(), decoder_pattern_sequence.size(), decoder_pattern_sequence[b, 3, :].size(),b)
-                    decoder_input[:,b,:] = decoder_pattern_sequence[b, di[b], :]
                     if di[b] >= decoder_pattern_sequence_ids.size()[1]-1:
                         pass
                     else:
-                        if decoder_mask_sequence[b, di[b]] == 1:
+                        if decoder_mask_sequence[b, di[b]] == 1 and decoder_mask_sequence[b, di[b] + 1] == 0:
                             di[b] += 1
-                        else:
-                            if di[b] >=1 :
-                                if decoder_mask_sequence[b, di[b]] == 0 and decoder_mask_sequence[b, di[b] - 1] == 1:
-                                    state[b] = 1
-                                    while decoder_mask_sequence[b, di[b]] == 0:
-                                        di[b] += 1
-                            else:
-                                print(decoder_mask_sequence[b,:], 1 - decoder_mask_sequence[:,0])
 
-                                print('error')
+                            if di[b] >= decoder_pattern_sequence_ids.size()[1] - 1:
+                                pass
+                            else:
+                                while decoder_mask_sequence[b, di[b]] == 0:
+                                    di[b] += 1
+                                state[b] = 1
+
+                                if action[:, b] == 1:
+                                    state[b] = 0
+                        elif decoder_mask_sequence[b, di[b]] == 0:
+                            print('0 error.')
+                        elif decoder_mask_sequence[b, di[b]] == 1 and decoder_mask_sequence[b, di[b] + 1] == 1:
+                            di[b] += 1
+
 
                 elif state[b] == 1:
-                    if di[b] ==0 and decoder_mask_sequence[b, di[b]] == 0:
-                        while decoder_mask_sequence[b, di[b]] == 0:
-                            di[b] += 1
-                    count[b] += 1
-                    decoder_input[:,b,:] = last_output[:,b,:]
                     if action[:,b] == 1:
                         state[b] = 0
+
+                    count[b] += 1
                     if count[b] > 4:
                         count[b] = 0
                         state[b]=0
+
+                if state[b] == 0:
+                    decoder_input[:,b,:] = decoder_pattern_sequence[b, di[b], :]
+
+                elif state[b] == 1:
+                    decoder_input[:,b,:] = last_output[:,b,:]
+
 
         decoder_id_res = torch.cat(decoder_id_res, dim = 0)  #seqlen * batch
         # print(decoder_id_res.size())
@@ -348,6 +372,11 @@ class Decoder(nn.Module):
             decode_id_list = list(decoder_id_res[:,b])
             if self.word2index['END_TOKEN'] in decode_id_list:
                 decode_id_list = decode_id_list[:decode_id_list.index(self.word2index['END_TOKEN'])] if decode_id_list[0] != self.word2index['END_TOKEN'] else [self.word2index['END_TOKEN']]
+            if self.word2index['PAD'] in decode_id_list:
+                pad_index = len(decode_id_list)-1
+                while decode_id_list[pad_index] == self.word2index['PAD']:
+                    pad_index -= 1
+                decode_id_list = decode_id_list[:(pad_index+1)]
             # print(decode_id_list)
             decoded_words.append([self.index2word[id] for id in decode_id_list])
         return decoded_words
