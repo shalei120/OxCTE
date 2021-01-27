@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ # -*- coding: utf-8 -*-
 """
 Created on Sat Apr 09 16:02:06 2016
 
@@ -510,6 +510,21 @@ class TextData:
             dataset = self.loadDataset(self.data_dump_path)
             # print('train size:\t', len(dataset['train']))
             # print('test size:\t', len(dataset['test']))
+
+            txtfile_train = open('../WikibioCTE/train.csv','w')
+            txtfile_train.write('Question:Q\t Answer:A\t Answer_Length\t Document:D\n')
+            for  title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target in dataset['train']:
+                # print(raw_content,slot_len)
+                txtfile_train.write(self.index2title[title] + '\t' + ' '.join(raw_content) + '\t' + str(slot_len) + '\t' + ' '.join(raw_target)+'\n')
+            txtfile_train.close()
+
+            txtfile_dev = open('../WikibioCTE/dev.csv','w')
+            txtfile_dev.write('Question:Q\t Answer:A\t Answer_Length\t Document:D\n')
+            for  title, slot, slot_len, context_sens, context_sen_num, raw_content, raw_target in dataset['dev']:
+                txtfile_dev.write(self.index2title[title] + '\t' + ' '.join(raw_content)  + '\t' + str(slot_len)  + '\t' + ' '.join(raw_target)+'\n')
+            txtfile_dev.close()
+            exit()
+
             print('loaded')
         return dataset
 
@@ -770,3 +785,4 @@ class TextData:
 
 if __name__ == '__main__':
     td = TextData()
+    print(len(td.datasets['train']), len(td.datasets['dev']), len(td.datasets['test']))
