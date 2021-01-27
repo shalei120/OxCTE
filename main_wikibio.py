@@ -29,9 +29,12 @@ from LSTM import LSTM_Model
 from LSTM_CTE_Wikibio import LSTM_CTE_Model
 from LSTM_CTE_Wikibio_BO import LSTM_CTE_Model_with_action
 
+from kenlmWrapper import LMEvaluator as LMer
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--gpu', '-g')
 parser.add_argument('--modelarch', '-m')
+parser.add_argument('--predictpattern', '-p')
 parser.add_argument('--need_pretrain_model', '-npm')
 cmdargs = parser.parse_args()
 
@@ -39,6 +42,7 @@ usegpu = True
 
 if cmdargs.gpu is None:
     usegpu = False
+    args['device'] = 'cpu'
 else:
     usegpu = True
     args['device'] = 'cuda:' + str(cmdargs.gpu)
@@ -47,6 +51,11 @@ if cmdargs.modelarch is None:
     args['model_arch'] = 'lstm'
 else:
     args['model_arch'] = cmdargs.modelarch
+
+if cmdargs.predictpattern is None:
+    args['predictpattern'] = 'gold'
+else:
+    args['predictpattern'] = cmdargs.modelarch
 #
 if cmdargs.need_pretrain_model is None:
     args['need_pretrain_model'] = False
@@ -74,7 +83,7 @@ class Runner:
 
     def main(self):
         args['datasetsize'] = -1
-
+        self.LMer = LMer()
         self.textData = td_wiki(glove=False)
         args['batchSize'] = 16
         # args['model_arch'] = 'lstm_cte'
@@ -84,7 +93,7 @@ class Runner:
         args['TitleNum'] = self.textData.getTitleSize()
 
         print(self.textData.getVocabularySize())
-        args['model_arch'] = 'lstm_cte_bo'
+        # args['model_arch'] = 'lstm_cte_bo'
         frame = inspect.currentframe()  # define a frame to track
         # gpu_tracker = MemTracker(frame, path = args['rootDir']+'/')  # define a GPU tracker
         if args['model_arch'] == 'lstm':
@@ -136,7 +145,7 @@ class Runner:
         # accuracy = self.test('test', max_accu)
         if args['need_pretrain_model'] == 'True':
             self.pretrain_enc_dec(batches)
-        # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
+        # val_bleu, bleu_con, val_loss, prec, rec, f = self.evaluate(self.model)
         # test_bleu, bleu_con_test, test_loss = self.Test(self.model)
         for epoch_i in range(args['numEpochs']):
             iter += 1
@@ -201,20 +210,21 @@ class Runner:
             # After the completion of each training epoch, measure the model's performance
             # on our validation set.
             bleu_con = 0
-            # val_bleu, bleu_con, val_loss = self.evaluate(self.model)
-            test_bleu, bleu_con_test, test_loss, dbleu,compare_BLEU = self.Test(self.model)
+            # val_bleu, bleu_con, val_loss, prec, rec, f = self.evaluate(self.model)
+            metrics = self.Test(self.model)
             # val_bleu, val_loss = self.evaluate(self.model)
             # Print performance over the entire training data
             time_elapsed = time.time() - t0_epoch
 
-            # print( f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {'-':^10}")
-            print(test_bleu, bleu_con_test, test_loss, dbleu, compare_BLEU)
+            # print( f"{epoch_i + 1:^7} | {bleu_con:^9.2f} | {avg_train_loss:^12.6f} | {val_loss:^10.6f} | {val_bleu:^9.2f} | {prec:^9.2f}| {rec:^9.2f}| {f:^9.2f}")
+            print(metrics)
             print("-" * 70)
             print("\n")
 
         print("Training complete!")
 
     def evaluate(self, model):
+        args['mode'] = 'runeval'
         """After the completion of each training epoch, measure the model's performance
         on our validation set.
         """
@@ -235,14 +245,26 @@ class Runner:
         gold_context = []
         # val_accuracy = []/
         # For each batch in our validation set...
+        precisions=[]
+        recalls=[]
+        Fs=[]
         pppt = False
+
+        casenum = 0
         for batch in batches:
             # Compute logits
             with torch.no_grad():
-                loss, de_words_answer, de_words_context, sampled_words = model.predict(batch)
+
+                casenum += len(batch.field)
+                loss, de_words_answer, de_words_context, sampled_words, gold_ans_mask, mask = model.predict(batch)
                 # loss, de_words_answer = model.predict(batch)
                 pred_ans.extend(de_words_answer)
                 pred_context.extend(de_words_context)
+                precisions.append(torch.sum((sampled_words == gold_ans_mask) * (gold_ans_mask * mask == 1), dim=1) / (
+                    torch.sum(sampled_words == 1, dim=1)) + 1e-6)
+                recalls.append(torch.sum((sampled_words == gold_ans_mask) * (gold_ans_mask * mask == 1), dim=1) / (
+                            torch.sum(gold_ans_mask == 1, dim=1) + 1e-6))
+                Fs.append(2 * precisions[-1] * recalls[-1] / (precisions[-1] + recalls[-1] + 1e-6))
                 if not pppt:
 
                     pppt = True
@@ -274,10 +296,13 @@ class Runner:
         bleu = -1
         bleu = self.get_F(gold_ans, pred_ans)
         bleu_con = self.get_corpus_BLEU(gold_context, pred_context)
+        prec = sum([torch.sum(p) for p in precisions]) / casenum
+        rec = sum([torch.sum(p) for p in recalls]) / casenum
+        f = sum([torch.sum(p) for p in Fs]) / casenum
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
-        return bleu, bleu_con, val_loss
+        return bleu, bleu_con, val_loss, prec, rec, f
         # return bleu, val_loss
 
     def readtestdata(self):
@@ -460,6 +485,13 @@ class Runner:
         # For each batch in our validation set...
         pppt = False
         record_file = open(args['rootDir'] + 'record_test.txt', 'w')
+        ppls = []
+        precisions=[]
+        recalls=[]
+        Fs=[]
+        casenum = 0
+        gold_mask_content=[]
+        pred_mask_content=[]
         for batch in tqdm(batches):
             # Compute logits
             with torch.no_grad():
@@ -473,11 +505,29 @@ class Runner:
                 x.targetSeqs = batch.targetSeqs
                 x.ContextDecoderSeqs = batch.ContextDecoderSeqs
                 x.ContextTargetSeqs = batch.ContextTargetSeqs
-
-                loss, de_words_answer, de_words_context, sampled_words = model.predict(x)
+                casenum += len(x.field)
+                loss, de_words_answer, de_words_context, sampled_words, gold_ans_mask, mask = model.predict(x)
                 # loss, de_words_answer = model.predict(batch)
                 pred_ans.extend(de_words_answer)
                 pred_context.extend(de_words_context)
+                for gam, pam, cnt in zip(gold_ans_mask, sampled_words, x.contextSeqs ):
+                    gold = []
+                    pred = []
+                    for g, p, c in zip(gam, pam, cnt):
+                        if g == 1:
+                            gold.append('[M]')
+                        else:
+                            gold.append(c)
+                        if p == 1:
+                            pred.append('[M]')
+                        else:
+                            pred.append(c)
+                    gold_mask_content.append([gold])
+                    pred_mask_content.append(pred)
+
+                precisions.append(torch.sum((sampled_words == gold_ans_mask) *  (gold_ans_mask * mask==1), dim = 1)/ (torch.sum(sampled_words==1, dim = 1))+1e-6)
+                recalls.append(torch.sum((sampled_words == gold_ans_mask) *  (gold_ans_mask * mask==1), dim = 1)/ (torch.sum(gold_ans_mask==1, dim = 1)+1e-6))
+                Fs.append(2*precisions[-1]*recalls[-1]/(precisions[-1] + recalls[-1] + 1e-6))
                 if not pppt:
 
                     pppt = True
@@ -533,8 +583,25 @@ class Runner:
         # Compute the average accuracy and loss over the validation set.
         val_loss = np.mean(val_loss)
 
+        pbleu = self.get_corpus_BLEU(gold_mask_content, pred_mask_content)
 
-        return bleu, bleu_con, val_loss, dBLEU, bleu_con - 0.9 * DDp_BLEU
+        perplexity = self.LMer.Perplexity(pred_context)
+        prec = sum([torch.sum(p) for p in precisions]) / casenum
+        rec = sum([torch.sum(p) for p in recalls]) / casenum
+        f = sum([torch.sum(p) for p in Fs]) / casenum
+
+        return {
+            'answer_F': bleu,
+            'bleu_con': bleu_con,
+            'val_loss': val_loss,
+            'dBLEU': dBLEU,
+            'iBLEU': bleu_con - 0.9 * DDp_BLEU,
+            'perplexity': sum(perplexity)/len(perplexity),
+            'prec': prec,
+            'rec': rec,
+            'F1': f,
+            'pBLEU':pbleu
+        }
 
 
 

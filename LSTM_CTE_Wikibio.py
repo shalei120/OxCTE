@@ -188,11 +188,15 @@ class LSTM_CTE_Model(nn.Module):
         else:
             sampled_seq = (z_prob > 0.5).float() *  mask.unsqueeze(2)
 
+
+        gold_ans_mask, _ = (context_inputs.unsqueeze(2) == pure_answer.unsqueeze(1)).max(2)
+
         if mode == 'train':
-            noans_mask, _ = (context_inputs.unsqueeze(2) == pure_answer.unsqueeze(1)).max(2)
-            noans_mask = 1-noans_mask.int()
+            ans_mask, _ = (context_inputs.unsqueeze(2) == pure_answer.unsqueeze(1)).max(2)
+            noans_mask = 1-ans_mask.int()
             # print(noans_mask)
         else:
+            ans_mask = sampled_seq[:,:,1].int()
             noans_mask = sampled_seq[:,:,0].int()
 
         answer_only_sequence = context_inputs_embs * sampled_seq[:,:,1].unsqueeze(2)
@@ -264,33 +268,50 @@ class LSTM_CTE_Model(nn.Module):
         I_x_z = torch.abs(torch.mean(-torch.log(z_prob[:, :, 0] + eps), 1) + np.log(0.5))
         # I_x_z = torch.abs(torch.mean(torch.log(z_prob[:, :, 1]+eps), 1) -np.log(0.1))
 
-        loss = 100 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + cross_sim*100 #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
+        loss = 10 * I_x_z.mean() + answer_recon_loss_mean.mean() + context_recon_loss_mean + cross_sim*100 #+ ((answer_recon_loss_mean.detach() )* answer_only_logpz.mean(1)).mean()
         # print(loss, 100 * I_x_z.mean(), answer_recon_loss_mean.mean(), context_recon_loss_mean, cross_sim)
                #    + context_recon_loss_mean.detach() * no_answer_logpz.mean(1)).mean()
         # loss = context_recon_loss_mean.mean()
         self.tt = [answer_recon_loss_mean.mean() , context_recon_loss_mean, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), cross_sim]
         # self.tt = [context_recon_loss_mean.mean(),]
         # self.tt = [answer_recon_loss_mean.mean() , (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()]
-        return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], en_context_output_shrink, mask,  enc_onehot, en_context_output_plus, mask_plus, enc_onehot_plus
-        # return loss, answer_only_state,  (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean()
-        # return loss, None, en_context_state, pure_answer_output, 0
+        # return loss, answer_only_state, no_answer_state, pure_answer_output, (sampled_seq[:,:,1].sum(1)*1.0/ mask.sum(1)).mean(), sampled_seq[:,:,1], \
+        #        en_context_output_shrink, mask,  enc_onehot, en_context_output_plus, mask_plus, enc_onehot_plus
+        return {
+            'loss': loss,
+            'answer_only_state': answer_only_state,
+            'no_answer_state': no_answer_state,
+            'pure_answer_output': pure_answer_output,
+            'closs': (sampled_seq[:, :, 1].sum(1) * 1.0 / mask.sum(1)).mean(),
+            'sampled_words': sampled_seq[:, :, 1],
+            'en_context_output': en_context_output_shrink,
+            'mask': mask,
+            'enc_onehot': enc_onehot,
+            'en_context_output_plus': en_context_output_plus,
+            'mask_plus': mask_plus,
+            'enc_onehot_plus': enc_onehot_plus,
+            'context_inputs': context_inputs,
+            'context_inputs_embs': context_inputs_embs,
+            'ans_mask': ans_mask,
+            'gold_ans_mask': gold_ans_mask
+
+        }
 
 
 
     def forward(self, x):
-        loss, _,_,_, closs, _,_,_,_ ,_,_,_= self.build(x, mode= 'train')
-        return loss, closs
+        data= self.build(x, mode= 'train')
+        return data['loss'], data['closs']
 
     def predict(self, x):
-        # loss, answer_only_state, no_answer_state, pure_answer_output,_ = self.build(x)
-        loss, answer_only_state, no_answer_state, pure_answer_output, _, sampled_words, en_context_output, mask,  enc_onehot, en_context_output_plus, mask_plus, enc_onehot_plus = self.build(x, mode= 'train')
+        data = self.build(x, mode= 'train')
         de_words_answer = []
-        if answer_only_state is not None:
-            de_words_answer = self.decoder_answer.generate(answer_only_state, enc_embs = en_context_output, enc_mask=mask, enc_onehot = enc_onehot)
-        de_words_context = self.decoder_no_answer.generate(no_answer_state, cat = pure_answer_output, enc_embs = en_context_output_plus, enc_mask=mask_plus, enc_onehot = enc_onehot_plus)
+        if data['answer_only_state'] is not None:
+            de_words_answer = self.decoder_answer.generate(data['answer_only_state'], enc_embs = data['en_context_output'], enc_mask=data['mask'], enc_onehot = data['enc_onehot'])
+        de_words_context = self.decoder_no_answer.generate(data['no_answer_state'], cat = data['pure_answer_output'], enc_embs = data['en_context_output_plus'], enc_mask=data['mask_plus'], enc_onehot = data['enc_onehot_plus'])
         # de_words_context = self.decoder_no_answer.generate(no_answer_state, cat = None, enc_embs = en_context_output_plus, enc_mask=mask_plus, enc_onehot = enc_onehot_plus)
 
-        return loss, de_words_answer, de_words_context, sampled_words
+        return data['loss'], de_words_answer, de_words_context, data['sampled_words'], data['gold_ans_mask'], data['mask']
 
     def pre_training_forward(self, x, eps=1e-6):
         context_inputs = torch.LongTensor(x.contextSeqs).to(args['device'])

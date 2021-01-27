@@ -336,13 +336,13 @@ class Decoder(nn.Module):
 
                             if di[b] >= decoder_pattern_sequence_ids.size()[1] - 1:
                                 pass
-                            else:
-                                while decoder_mask_sequence[b, di[b]] == 0:
+                            else: #
+                                while di[b] < decoder_pattern_sequence_ids.size()[1]-1 and  decoder_mask_sequence[b, di[b]] == 0:
                                     di[b] += 1
                                 state[b] = 1
 
-                                if action[:, b] == 1:
-                                    state[b] = 0
+                                # if action[:, b] == 1:
+                                #     state[b] = 0
                         elif decoder_mask_sequence[b, di[b]] == 0:
                             print('0 error.')
                         elif decoder_mask_sequence[b, di[b]] == 1 and decoder_mask_sequence[b, di[b] + 1] == 1:
@@ -352,11 +352,11 @@ class Decoder(nn.Module):
                 elif state[b] == 1:
                     if action[:,b] == 1:
                         state[b] = 0
-
-                    count[b] += 1
-                    if count[b] > 4:
-                        count[b] = 0
-                        state[b]=0
+                    else:
+                        count[b] += 1
+                        if count[b] > 4:
+                            count[b] = 0
+                            state[b]=0
 
                 if state[b] == 0:
                     decoder_input[:,b,:] = decoder_pattern_sequence[b, di[b], :]
