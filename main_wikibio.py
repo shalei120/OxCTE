@@ -121,7 +121,9 @@ class Runner:
             # gpu_tracker.track()
             self.model = self.model.to(args['device'])
             # gpu_tracker.track()
-            print(sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True))
+            sortsize = sorted([(n,sys.getsizeof(p.storage())) for n,p in self.model.named_parameters()], key=lambda x: x[1], reverse=True)
+            totalsize = sum([s for name, s in sortsize])
+            print('Total parameter size: ', totalsize)
             self.train(gpu_tracker=None)
 
     def train(self, gpu_tracker, print_every=1000, plot_every=10, learning_rate=0.001):
